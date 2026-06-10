@@ -1,35 +1,16 @@
 use std::cmp::Ordering;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use anyhow::Result;
 use russh::client;
 use russh::Disconnect;
-use russh_keys::key;
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 
-use crate::config::{AuthMethod, ServerConfig};
-use crate::ssh::host_key::verify_known_host;
-
-struct ClientHandler {
-    host: String,
-    port: u16,
-}
-
-#[async_trait::async_trait]
-impl client::Handler for ClientHandler {
-    type Error = anyhow::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &key::PublicKey,
-    ) -> std::result::Result<bool, Self::Error> {
-        verify_known_host(&self.host, self.port, server_public_key)
-    }
-}
+use crate::config::ServerConfig;
+use super::common::{ClientHandler, connect_authenticated};
 
 #[derive(Debug, Serialize)]
 pub struct SftpEntry {
@@ -98,51 +79,7 @@ fn metadata_modified_unix(metadata: &russh_sftp::client::fs::Metadata) -> Option
         .map(|dur| dur.as_secs())
 }
 
-async fn connect_authenticated(config: &ServerConfig) -> Result<client::Handle<ClientHandler>> {
-    let ssh_config = client::Config {
-        ..Default::default()
-    };
 
-    let addr = format!("{}:{}", config.host, config.port);
-    let handler = ClientHandler {
-        host: config.host.clone(),
-        port: config.port,
-    };
-    let mut session = client::connect(Arc::new(ssh_config), &addr[..], handler)
-        .await
-        .map_err(|e| anyhow::anyhow!("SSH connect failed: {}", e))?;
-
-    match &config.auth_method {
-        AuthMethod::Password { password } => {
-            let auth_result = session
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(|e| anyhow::anyhow!("Password auth failed: {}", e))?;
-            if !auth_result {
-                anyhow::bail!("Password authentication rejected by server");
-            }
-        }
-        AuthMethod::Key {
-            key_path,
-            passphrase,
-        } => {
-            let key_pair = russh_keys::load_secret_key(key_path, passphrase.as_deref())
-                .map_err(|e| anyhow::anyhow!("Failed to load SSH key: {}", e))?;
-            let auth_result = session
-                .authenticate_publickey(&config.username, Arc::new(key_pair))
-                .await
-                .map_err(|e| anyhow::anyhow!("Key auth failed: {}", e))?;
-            if !auth_result {
-                anyhow::bail!("Public key authentication rejected by server");
-            }
-        }
-        AuthMethod::Agent => {
-            auth_agent(&mut session, &config.username).await?;
-        }
-    }
-
-    Ok(session)
-}
 
 struct SftpConnection {
     session: client::Handle<ClientHandler>,
@@ -175,61 +112,7 @@ async fn close_sftp(session: &client::Handle<ClientHandler>, sftp: &SftpSession,
         .await;
 }
 
-#[cfg(unix)]
-async fn auth_agent(session: &mut client::Handle<ClientHandler>, username: &str) -> Result<()> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_env()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to SSH agent: {}", e))?;
 
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to list agent keys: {}", e))?;
-
-    if identities.is_empty() {
-        anyhow::bail!("SSH agent has no keys loaded");
-    }
-
-    let mut current_agent = agent;
-    for id in &identities {
-        let (returned_agent, result) = session
-            .authenticate_future(username, id.clone(), current_agent)
-            .await;
-        current_agent = returned_agent;
-        if let Ok(true) = result {
-            return Ok(());
-        }
-    }
-
-    anyhow::bail!("SSH agent authentication failed - no accepted keys")
-}
-
-#[cfg(windows)]
-async fn auth_agent(session: &mut client::Handle<ClientHandler>, username: &str) -> Result<()> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_pageant().await;
-
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to list Pageant keys: {}", e))?;
-
-    if identities.is_empty() {
-        anyhow::bail!("Pageant has no keys loaded");
-    }
-
-    let mut current_agent = agent;
-    for id in &identities {
-        let (returned_agent, result) = session
-            .authenticate_future(username, id.clone(), current_agent)
-            .await;
-        current_agent = returned_agent;
-        if let Ok(true) = result {
-            return Ok(());
-        }
-    }
-
-    anyhow::bail!("Pageant authentication failed - no accepted keys")
-}
 
 pub async fn list_dir(config: &ServerConfig, path: Option<String>) -> Result<SftpListResponse> {
     let SftpConnection { session, sftp } = connect_sftp(config).await?;
@@ -491,5 +374,129 @@ pub async fn create_dir(config: &ServerConfig, path: String) -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create folder '{}': {}", path, e))?;
     close_sftp(&session, &sftp, "sftp mkdir complete").await;
+    Ok(())
+}
+
+pub async fn set_permissions(config: &ServerConfig, path: String, chmod_octal: u32) -> Result<()> {
+    let path = path.trim();
+    if path.is_empty() {
+        anyhow::bail!("Path is required");
+    }
+
+    let SftpConnection { session, sftp } = connect_sftp(config).await?;
+    let mut meta = sftp.metadata(path.to_string()).await?;
+    meta.permissions = Some(chmod_octal);
+    sftp.set_metadata(path.to_string(), meta)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to set permissions for '{}': {}", path, e))?;
+    close_sftp(&session, &sftp, "sftp chmod complete").await;
+    Ok(())
+}
+
+pub async fn upload_dir(
+    config: &ServerConfig,
+    local_dir: String,
+    remote_dir: String,
+) -> Result<()> {
+    let local_base = Path::new(&local_dir);
+    if !local_base.is_dir() {
+        anyhow::bail!("Local path is not a directory");
+    }
+
+    let SftpConnection { session, sftp } = connect_sftp(config).await?;
+    let _ = sftp.create_dir(remote_dir.clone()).await;
+
+    let mut stack = vec![local_base.to_path_buf()];
+
+    while let Some(current_local_dir) = stack.pop() {
+        let mut entries = tokio::fs::read_dir(&current_local_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let rel = path.strip_prefix(local_base)?;
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let remote_path = join_remote(&remote_dir, &rel_str);
+
+            if path.is_dir() {
+                let _ = sftp.create_dir(remote_path).await;
+                stack.push(path);
+            } else if path.is_file() {
+                let data = tokio::fs::read(&path).await?;
+                let mut remote_file = sftp.create(remote_path).await?;
+                remote_file.write_all(&data).await?;
+                let _ = remote_file.shutdown().await;
+            }
+        }
+    }
+
+    close_sftp(&session, &sftp, "sftp upload dir complete").await;
+    Ok(())
+}
+
+pub async fn download_dir(
+    config: &ServerConfig,
+    remote_dir: String,
+    local_dir: String,
+) -> Result<()> {
+    let local_base = Path::new(&local_dir);
+    tokio::fs::create_dir_all(local_base).await?;
+
+    let SftpConnection { session, sftp } = connect_sftp(config).await?;
+    let canonical_remote_base = sftp
+        .canonicalize(remote_dir.clone())
+        .await
+        .unwrap_or(remote_dir);
+
+    let mut stack = vec![(canonical_remote_base.clone(), "".to_string())];
+
+    while let Some((current_remote_dir, rel_path)) = stack.pop() {
+        let read_dir = sftp.read_dir(current_remote_dir).await?;
+        for entry in read_dir {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let file_type = entry.file_type();
+            let entry_rel = if rel_path.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", rel_path, name)
+            };
+            let remote_path = join_remote(&canonical_remote_base, &entry_rel);
+            let local_path = local_base.join(entry_rel.replace('/', &std::path::MAIN_SEPARATOR.to_string()));
+
+            if file_type.is_dir() {
+                tokio::fs::create_dir_all(&local_path).await?;
+                stack.push((remote_path, entry_rel));
+            } else {
+                if let Some(parent) = local_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                let bytes = sftp.read(remote_path).await?;
+                tokio::fs::write(local_path, &bytes).await?;
+            }
+        }
+    }
+
+    close_sftp(&session, &sftp, "sftp download dir complete").await;
+    Ok(())
+}
+
+pub async fn create_symlink(
+    config: &ServerConfig,
+    target: String,
+    path: String,
+) -> Result<()> {
+    let target = target.trim();
+    let path = path.trim();
+    if target.is_empty() || path.is_empty() {
+        anyhow::bail!("Both symlink path and target path are required");
+    }
+
+    let SftpConnection { session, sftp } = connect_sftp(config).await?;
+    sftp.symlink(target.to_string(), path.to_string())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create symlink: {}", e))?;
+
+    close_sftp(&session, &sftp, "sftp symlink complete").await;
     Ok(())
 }

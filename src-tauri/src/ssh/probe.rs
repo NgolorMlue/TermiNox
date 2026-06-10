@@ -1,32 +1,13 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use russh::client;
 use russh::{ChannelMsg, Disconnect};
-use russh_keys::key;
 use serde::Serialize;
 
-use crate::config::{AuthMethod, ServerConfig};
-use crate::ssh::host_key::verify_known_host;
-
-struct ClientHandler {
-    host: String,
-    port: u16,
-}
-
-#[async_trait::async_trait]
-impl client::Handler for ClientHandler {
-    type Error = anyhow::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &key::PublicKey,
-    ) -> std::result::Result<bool, Self::Error> {
-        verify_known_host(&self.host, self.port, server_public_key)
-    }
-}
+use crate::config::ServerConfig;
+use super::common::{ClientHandler, connect_authenticated};
 
 #[derive(Debug, Serialize)]
 pub struct ServerMetricsSnapshot {
@@ -98,106 +79,7 @@ const WINDOWS_SERVICES_COMMAND: &str = r#"powershell -NoProfile -NonInteractive 
 const WINDOWS_SERVICES_FALLBACK_COMMAND: &str =
     r#"cmd /C "netstat -ano -p tcp | findstr LISTENING""#;
 
-async fn connect_authenticated(config: &ServerConfig) -> Result<client::Handle<ClientHandler>> {
-    let ssh_config = client::Config {
-        ..Default::default()
-    };
-    let addr = format!("{}:{}", config.host, config.port);
-    let handler = ClientHandler {
-        host: config.host.clone(),
-        port: config.port,
-    };
-    let mut session = client::connect(Arc::new(ssh_config), &addr[..], handler)
-        .await
-        .map_err(|e| anyhow::anyhow!("SSH connect failed: {}", e))?;
 
-    match &config.auth_method {
-        AuthMethod::Password { password } => {
-            let auth_result = session
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(|e| anyhow::anyhow!("Password auth failed: {}", e))?;
-            if !auth_result {
-                anyhow::bail!("Password authentication rejected by server");
-            }
-        }
-        AuthMethod::Key {
-            key_path,
-            passphrase,
-        } => {
-            let key_pair = russh_keys::load_secret_key(key_path, passphrase.as_deref())
-                .map_err(|e| anyhow::anyhow!("Failed to load SSH key: {}", e))?;
-            let auth_result = session
-                .authenticate_publickey(&config.username, Arc::new(key_pair))
-                .await
-                .map_err(|e| anyhow::anyhow!("Key auth failed: {}", e))?;
-            if !auth_result {
-                anyhow::bail!("Public key authentication rejected by server");
-            }
-        }
-        AuthMethod::Agent => {
-            auth_agent(&mut session, &config.username).await?;
-        }
-    }
-
-    Ok(session)
-}
-
-#[cfg(unix)]
-async fn auth_agent(session: &mut client::Handle<ClientHandler>, username: &str) -> Result<()> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_env()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to SSH agent: {}", e))?;
-
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to list agent keys: {}", e))?;
-
-    if identities.is_empty() {
-        anyhow::bail!("SSH agent has no keys loaded");
-    }
-
-    let mut current_agent = agent;
-    for id in &identities {
-        let (returned_agent, result) = session
-            .authenticate_future(username, id.clone(), current_agent)
-            .await;
-        current_agent = returned_agent;
-        if let Ok(true) = result {
-            return Ok(());
-        }
-    }
-
-    anyhow::bail!("SSH agent authentication failed - no accepted keys")
-}
-
-#[cfg(windows)]
-async fn auth_agent(session: &mut client::Handle<ClientHandler>, username: &str) -> Result<()> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_pageant().await;
-
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to list Pageant keys: {}", e))?;
-
-    if identities.is_empty() {
-        anyhow::bail!("Pageant has no keys loaded");
-    }
-
-    let mut current_agent = agent;
-    for id in &identities {
-        let (returned_agent, result) = session
-            .authenticate_future(username, id.clone(), current_agent)
-            .await;
-        current_agent = returned_agent;
-        if let Ok(true) = result {
-            return Ok(());
-        }
-    }
-
-    anyhow::bail!("Pageant authentication failed - no accepted keys")
-}
 
 async fn run_exec_capture(
     session: &client::Handle<ClientHandler>,

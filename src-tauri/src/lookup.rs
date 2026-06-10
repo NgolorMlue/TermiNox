@@ -842,7 +842,7 @@ pub async fn geocode_location(query: String) -> Result<GeocodeLocationResponse, 
 
     let resp = client
         .get("https://nominatim.openstreetmap.org/search")
-        .header("User-Agent", "NodeGrid/2.0 (desktop app geocoder)")
+        .header("User-Agent", "TermiNox/2.0 (desktop app geocoder)")
         .query(&[
             ("q", query),
             ("format", "jsonv2"),

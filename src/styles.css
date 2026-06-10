@@ -67,19 +67,21 @@ body {
 }
 
 .logo {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--accent);
-  text-shadow: 0 0 16px rgba(0, 191, 255, .5);
-  letter-spacing: 3px;
-  white-space: nowrap;
-  flex-shrink: 0
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
-.logo em {
-  color: var(--text2);
-  font-style: normal
+.logo-img {
+  height: 32px;
+  width: 32px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(0, 217, 255, 0.55)) drop-shadow(0 0 18px rgba(0, 240, 181, 0.25));
+  transition: filter 0.2s ease;
+}
+
+.logo-img:hover {
+  filter: drop-shadow(0 0 12px rgba(0, 217, 255, 0.85)) drop-shadow(0 0 24px rgba(0, 240, 181, 0.45));
 }
 
 .header-stats {

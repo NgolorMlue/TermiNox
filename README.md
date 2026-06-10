@@ -1,4 +1,4 @@
-# Terminets
+# TermiNox
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-D22128.svg)](./LICENSE)
 ![Version 2.0.0](https://img.shields.io/badge/version-2.0.0-111111.svg)
@@ -7,13 +7,13 @@
 ![Rust Backend](https://img.shields.io/badge/backend-Rust-000000.svg)
 ![JavaScript Frontend](https://img.shields.io/badge/frontend-JavaScript-F7DF1E.svg)
 
-Terminets is an open-source desktop application for managing and monitoring VPS and server infrastructure from a single interface.
+TermiNox is an open-source desktop application for managing and monitoring VPS and server infrastructure from a single interface.
 
-Internally, the UI is branded as **NODE/GRID**. The app combines live infrastructure visibility, terminal access, file operations, and session history into one desktop control surface.
+The app combines live infrastructure visibility, terminal access, file operations, and session history into one desktop control surface.
 
 ## Stack
 
-Terminets is built with:
+TermiNox is built with:
 - **Tauri 2** for the desktop runtime and native backend
 - **Vite 6 + JavaScript** for the frontend
 - **Rust** for SSH, telnet, VNC proxying, and local runtime integrations
@@ -34,11 +34,11 @@ Terminets is built with:
 
 Main dashboard view:
 
-![Terminets dashboard screenshot](./img-prev/1.png)
+![TermiNox dashboard screenshot](./img-prev/1.png)
 
 Terminal and management view:
 
-![Terminets terminal and management screenshot](./img-prev/2.png)
+![TermiNox terminal and management screenshot](./img-prev/2.png)
 
 ## Project structure
 

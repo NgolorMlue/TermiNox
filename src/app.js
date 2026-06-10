@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════
-   NODE/GRID — Real SSH Terminal App
+   TermiNox — Real SSH Terminal App
    Tauri 2 + russh + xterm.js
 ══════════════════════════════════════════════════════════ */
 
@@ -39,6 +39,7 @@ import {
 } from './lib/server-model.js';
 import { askInputModal } from './lib/input-modal.js';
 import { showAlert, showConfirm, showDangerConfirm, showInput, showError } from './lib/modal-system.js';
+import { showToastWarning } from './lib/toast-system.js';
 import {
   getServerMapCoords,
   hasValidMapCoords,
@@ -2468,6 +2469,8 @@ function showSftpContextMenu(x, y, entry) {
   if (entry.is_dir) {
     items.push({ action: 'open', label: 'Open Folder' });
     items.push({ action: 'upload_here', label: 'Upload File Here' });
+    items.push({ action: 'upload_dir_here', label: 'Upload Folder Here' });
+    items.push({ action: 'download_dir', label: 'Download Folder' });
     items.push({ action: 'new_folder', label: 'New Folder Here' });
     items.push({ separator: true });
   } else {
@@ -2477,6 +2480,8 @@ function showSftpContextMenu(x, y, entry) {
   }
   items.push({ action: 'rename', label: 'Rename' });
   items.push({ action: 'copy_path', label: 'Copy Path' });
+  items.push({ action: 'chmod', label: 'Permissions (Chmod)' });
+  items.push({ action: 'symlink', label: 'Create Symlink' });
   items.push({ separator: true });
   items.push({
     action: 'delete',
@@ -2513,6 +2518,7 @@ function showSftpWorkspaceContextMenu(x, y, directoryPath) {
 
   menu.innerHTML = [
     '<button class="sftp-menu-item" data-action="upload_here_workspace">Upload File Here</button>',
+    '<button class="sftp-menu-item" data-action="upload_dir_workspace">Upload Folder Here</button>',
     '<button class="sftp-menu-item" data-action="new_file_workspace">New File Here</button>',
     '<button class="sftp-menu-item" data-action="new_folder_workspace">New Folder Here</button>',
     '<div class="sftp-menu-sep"></div>',
@@ -2533,6 +2539,8 @@ function showSftpWorkspaceContextMenu(x, y, directoryPath) {
       hideSftpContextMenu();
       if (action === 'upload_here_workspace') {
         await uploadFileToRemoteDir(targetDir);
+      } else if (action === 'upload_dir_workspace') {
+        await uploadDirToRemoteDir(targetDir);
       } else if (action === 'new_file_workspace') {
         await createSftpFile(targetDir);
       } else if (action === 'new_folder_workspace') {
@@ -2605,6 +2613,74 @@ async function downloadSftpEntry(entry) {
   }
 }
 
+async function uploadDirToRemoteDir(targetDir) {
+  const srv = selectedSftpServer();
+  const baseDir = String(targetDir || staticSftpState.path || '.').trim() || '.';
+  const picked = await open({
+    title: 'Select folder to upload',
+    directory: true,
+    multiple: false,
+  });
+  if (!picked) return;
+
+  const localPath = Array.isArray(picked) ? picked[0] : picked;
+  if (!localPath) return;
+
+  const dirname = String(localPath).split(/[\\/]/).pop() || 'upload_dir';
+  const remotePath = remoteJoinPath(baseDir, dirname);
+  setSftpControlsDisabled(true);
+  setStaticSftpStatus(`Uploading folder ${dirname} ...`);
+  try {
+    await invokeSftp('sftp_upload_dir', srv, {
+      localDir: String(localPath),
+      remoteDir: remotePath,
+    });
+    setStaticSftpStatus(`Uploaded folder ${dirname} to ${baseDir}`);
+    await loadStaticSftpDir(baseDir);
+  } catch (err) {
+    setStaticSftpStatus(`Upload folder failed: ${String(err)}`, true);
+  } finally {
+    setSftpControlsDisabled(false);
+  }
+}
+
+async function downloadSftpDir(entry) {
+  if (!entry || !entry.is_dir) return;
+  const srv = selectedSftpServer();
+  const remotePath = String(entry.path || '').trim();
+  if (!remotePath) return;
+  const dirName = remoteBaseName(remotePath) || 'download_dir';
+
+  const chosen = await open({
+    title: 'Select local folder to download to',
+    directory: true,
+    multiple: false,
+  });
+  if (!chosen) return;
+
+  const localParent = Array.isArray(chosen) ? chosen[0] : chosen;
+  if (!localParent) return;
+
+  const separator = localParent.includes('/') ? '/' : '\\';
+  const localPath = localParent.endsWith(separator)
+    ? `${localParent}${dirName}`
+    : `${localParent}${separator}${dirName}`;
+
+  setSftpControlsDisabled(true);
+  setStaticSftpStatus(`Downloading folder ${dirName} ...`);
+  try {
+    await invokeSftp('sftp_download_dir', srv, {
+      remoteDir: remotePath,
+      localDir: localPath,
+    });
+    setStaticSftpStatus(`Downloaded folder ${dirName} to ${localPath}`);
+  } catch (err) {
+    setStaticSftpStatus(`Download folder failed: ${String(err)}`, true);
+  } finally {
+    setSftpControlsDisabled(false);
+  }
+}
+
 async function renameSftpEntry(entry) {
   const oldPath = String(entry.path || '').trim();
   if (!oldPath) return;
@@ -2657,6 +2733,80 @@ async function deleteSftpEntry(entry) {
     await loadStaticSftpDir(staticSftpState.path || '.');
   } catch (err) {
     setStaticSftpStatus(`Delete failed: ${String(err)}`, true);
+  } finally {
+    setSftpControlsDisabled(false);
+  }
+}
+
+async function chmodSftpEntry(entry) {
+  const path = String(entry.path || '').trim();
+  if (!path) return;
+  const label = remoteBaseName(path) || path;
+
+  const chmodRaw = await askInputModal({
+    title: 'Set Permissions (Chmod)',
+    label: 'Octal Mode (e.g. 755)',
+    value: '755',
+    placeholder: 'e.g. 755',
+    submitText: 'Apply',
+  });
+  if (chmodRaw === null) return;
+  const trimmed = chmodRaw.trim();
+  const octalValue = parseInt(trimmed, 8);
+  if (isNaN(octalValue) || octalValue < 0 || octalValue > 0o777) {
+    showAlert({
+      title: 'Invalid Input',
+      message: 'Please enter a valid 3-digit octal value between 000 and 777.',
+      variant: 'error',
+    });
+    return;
+  }
+
+  const srv = selectedSftpServer();
+  setSftpControlsDisabled(true);
+  setStaticSftpStatus(`Chmod ${trimmed} for ${label} ...`);
+  try {
+    await invokeSftp('sftp_set_permissions', srv, {
+      path,
+      chmodOctal: octalValue,
+    });
+    setStaticSftpStatus(`Set permissions of ${label} to ${trimmed}`);
+    await loadStaticSftpDir(staticSftpState.path || '.');
+  } catch (err) {
+    setStaticSftpStatus(`Chmod failed: ${String(err)}`, true);
+  } finally {
+    setSftpControlsDisabled(false);
+  }
+}
+
+async function symlinkSftpEntry(entry) {
+  const path = String(entry.path || '').trim();
+  if (!path) return;
+  const label = remoteBaseName(path) || path;
+
+  const targetRaw = await askInputModal({
+    title: 'Create Symlink',
+    label: `Target file/folder that "${label}" points to:`,
+    value: '',
+    placeholder: '/path/to/target',
+    submitText: 'Create',
+  });
+  if (targetRaw === null) return;
+  const target = targetRaw.trim();
+  if (!target) return;
+
+  const srv = selectedSftpServer();
+  setSftpControlsDisabled(true);
+  setStaticSftpStatus(`Creating symlink from ${label} to ${target} ...`);
+  try {
+    await invokeSftp('sftp_create_symlink', srv, {
+      target,
+      path,
+    });
+    setStaticSftpStatus(`Symlink created successfully`);
+    await loadStaticSftpDir(staticSftpState.path || '.');
+  } catch (err) {
+    setStaticSftpStatus(`Symlink creation failed: ${String(err)}`, true);
   } finally {
     setSftpControlsDisabled(false);
   }
@@ -2722,6 +2872,14 @@ async function runSftpContextAction(action, entry) {
     if (entry.is_dir) await uploadFileToRemoteDir(entry.path);
     return;
   }
+  if (action === 'upload_dir_here') {
+    if (entry.is_dir) await uploadDirToRemoteDir(entry.path);
+    return;
+  }
+  if (action === 'download_dir') {
+    if (entry.is_dir) await downloadSftpDir(entry);
+    return;
+  }
   if (action === 'new_folder') {
     if (entry.is_dir) await createSftpFolder(entry.path);
     return;
@@ -2749,6 +2907,15 @@ async function runSftpContextAction(action, entry) {
   }
   if (action === 'delete') {
     await deleteSftpEntry(entry);
+    return;
+  }
+  if (action === 'chmod') {
+    await chmodSftpEntry(entry);
+    return;
+  }
+  if (action === 'symlink') {
+    await symlinkSftpEntry(entry);
+    return;
   }
 }
 
@@ -3062,6 +3229,7 @@ function addTermTab(options = {}) {
         <span class="term-conn-status" id="conn-status-${tid}" style="margin-left:8px;font-size:9px;color:var(--warn);letter-spacing:1px">CONNECTING\u2026</span>
       </div>
       <div class="term-actions">
+        <button class="term-btn" id="log-btn-${tid}">LOG</button>
         <button class="term-btn" id="clear-btn-${tid}">CLEAR</button>
         <button class="term-btn" id="reconnect-btn-${tid}">RECONNECT</button>
         <button class="term-btn danger" id="close-btn-${tid}">CLOSE</button>
@@ -3073,6 +3241,7 @@ function addTermTab(options = {}) {
   document.getElementById('term-panels-host').appendChild(panel);
 
   // Wire up action buttons
+  panel.querySelector(`#log-btn-${tid}`).addEventListener('click', () => toggleSessionLogging(tid));
   panel.querySelector(`#clear-btn-${tid}`).addEventListener('click', () => termClear(tid));
   panel.querySelector(`#reconnect-btn-${tid}`).addEventListener('click', () => termReconnect(tid));
   panel.querySelector(`#close-btn-${tid}`).addEventListener('click', () => closeTab(null, tid));
@@ -3170,6 +3339,7 @@ function addLocalTermTab(shellType = 'powershell', options = {}) {
         <span class="term-conn-status" id="conn-status-${tid}" style="margin-left:8px;font-size:9px;color:var(--warn);letter-spacing:1px">CONNECTING\u2026</span>
       </div>
       <div class="term-actions">
+        <button class="term-btn" id="log-btn-${tid}">LOG</button>
         <button class="term-btn" id="clear-btn-${tid}">CLEAR</button>
         <button class="term-btn" id="reconnect-btn-${tid}">RECONNECT</button>
         <button class="term-btn danger" id="close-btn-${tid}">CLOSE</button>
@@ -3180,6 +3350,7 @@ function addLocalTermTab(shellType = 'powershell', options = {}) {
     </div>`;
   document.getElementById('term-panels-host').appendChild(panel);
 
+  panel.querySelector(`#log-btn-${tid}`).addEventListener('click', () => toggleSessionLogging(tid));
   panel.querySelector(`#clear-btn-${tid}`).addEventListener('click', () => termClear(tid));
   panel.querySelector(`#reconnect-btn-${tid}`).addEventListener('click', () => termReconnect(tid));
   panel.querySelector(`#close-btn-${tid}`).addEventListener('click', () => closeTab(null, tid));
@@ -3263,6 +3434,7 @@ function addVncTab(options = {}) {
         <span class="term-conn-status" id="conn-status-${tid}" style="margin-left:8px;font-size:9px;color:var(--warn);letter-spacing:1px">CONNECTING\u2026</span>
       </div>
       <div class="term-actions">
+        <button class="term-btn" id="scale-btn-${tid}">SCALE: FIT</button>
         <button class="term-btn" id="reconnect-btn-${tid}">RECONNECT</button>
         <button class="term-btn danger" id="close-btn-${tid}">CLOSE</button>
       </div>
@@ -3275,6 +3447,7 @@ function addVncTab(options = {}) {
     </div>`;
   document.getElementById('term-panels-host').appendChild(panel);
 
+  panel.querySelector(`#scale-btn-${tid}`).addEventListener('click', () => toggleVncScale(tid));
   panel.querySelector(`#reconnect-btn-${tid}`).addEventListener('click', () => vncReconnect(tid));
   panel.querySelector(`#close-btn-${tid}`).addEventListener('click', () => closeTab(null, tid));
 
@@ -3378,6 +3551,12 @@ async function initVncSession(tid) {
       updateVncTabStatus(tid, 'error');
     });
 
+    rfb.addEventListener('clipboard', (e) => {
+      if (e.detail.text) {
+        navigator.clipboard.writeText(e.detail.text).catch(() => {});
+      }
+    });
+
     t.rfb = rfb;
 
   } catch (err) {
@@ -3416,6 +3595,64 @@ function updateVncTabStatus(tid, status) {
     connEl.style.color = status === 'connected' ? 'var(--accent2)' : status === 'error' ? 'var(--danger)' : 'var(--warn)';
   }
   renderSidebar();
+}
+
+function toggleVncScale(tid) {
+  const t = termTabs[tid];
+  if (!t || t.mode !== 'vnc' || !t.rfb) return;
+
+  const btn = t.panelEl.querySelector(`#scale-btn-${tid}`);
+  if (!btn) return;
+
+  // Toggle scaling
+  t.rfb.scaleViewport = !t.rfb.scaleViewport;
+  t.rfb.resizeSession = !t.rfb.scaleViewport;
+
+  if (t.rfb.scaleViewport) {
+    btn.textContent = 'SCALE: FIT';
+  } else {
+    btn.textContent = 'SCALE: 1:1';
+  }
+}
+
+async function toggleSessionLogging(tid) {
+  const t = termTabs[tid];
+  if (!t) return;
+
+  const btn = t.panelEl.querySelector(`#log-btn-${tid}`);
+  if (!btn) return;
+
+  if (t.isLogging) {
+    t.isLogging = false;
+    t.logFilePath = null;
+    btn.textContent = 'LOG';
+    btn.classList.remove('active');
+    showAlert({
+      title: 'Logging Stopped',
+      message: 'Terminal session logging has been stopped.',
+      variant: 'info',
+    });
+  } else {
+    try {
+      const selected = await saveDialog({
+        title: 'Save Terminal Log File',
+        filters: [{ name: 'Text Logs', extensions: ['txt', 'log'] }],
+      });
+      if (selected) {
+        t.logFilePath = selected;
+        t.isLogging = true;
+        btn.textContent = 'LOGGING';
+        btn.classList.add('active');
+        showAlert({
+          title: 'Logging Started',
+          message: `Recording session output to: ${selected}`,
+          variant: 'info',
+        });
+      }
+    } catch (err) {
+      showError('Failed to start logging', err);
+    }
+  }
 }
 
 async function vncReconnect(tid) {
@@ -3604,9 +3841,156 @@ function remoteEventPrefix(tab) {
   return remoteTabProtocol(tab);
 }
 
+function initTerminalSearch(tid, term, panel) {
+  if (!panel || !term) return;
+  const termBody = panel.querySelector('.term-body');
+  if (!termBody) return;
+
+  const searchBar = document.createElement('div');
+  searchBar.className = 'term-search-bar';
+  searchBar.id = `search-bar-${tid}`;
+  searchBar.style.cssText = `
+    display: none;
+    position: absolute;
+    top: 8px;
+    right: 24px;
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px 12px;
+    gap: 8px;
+    align-items: center;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  `;
+
+  searchBar.innerHTML = `
+    <input type="text" placeholder="Find..." style="background:#0c0f12;border:1px solid #444;color:#fff;padding:4px 8px;font-size:12px;border-radius:3px;outline:none;width:150px;" class="search-input">
+    <span style="font-size:11px;color:#888;min-width:60px;text-align:center;user-select:none;" class="search-status"></span>
+    <button style="background:none;border:none;color:#aaa;cursor:pointer;padding:4px 6px;font-size:12px;line-height:1;" class="search-prev" title="Previous match">&uarr;</button>
+    <button style="background:none;border:none;color:#aaa;cursor:pointer;padding:4px 6px;font-size:12px;line-height:1;" class="search-next" title="Next match">&darr;</button>
+    <button style="background:none;border:none;color:#aaa;cursor:pointer;padding:4px 6px;font-size:12px;line-height:1;margin-left:4px;" class="search-close" title="Close search">&times;</button>
+  `;
+
+  termBody.style.position = 'relative';
+  termBody.appendChild(searchBar);
+
+  const input = searchBar.querySelector('.search-input');
+  const status = searchBar.querySelector('.search-status');
+  const prevBtn = searchBar.querySelector('.search-prev');
+  const nextBtn = searchBar.querySelector('.search-next');
+  const closeBtn = searchBar.querySelector('.search-close');
+
+  let searchState = {
+    matches: [],
+    currentIndex: -1,
+    query: ''
+  };
+
+  const updateSearch = () => {
+    const query = input.value.trim();
+    if (!query) {
+      searchState = { matches: [], currentIndex: -1, query: '' };
+      status.textContent = '';
+      return;
+    }
+
+    const buffer = term.buffer.active;
+    const totalLines = buffer.length;
+    const matches = [];
+    const lowerQuery = query.toLowerCase();
+
+    for (let i = 0; i < totalLines; i++) {
+      const line = buffer.getLine(i);
+      if (line) {
+        const text = line.translateToString(true);
+        if (text.toLowerCase().includes(lowerQuery)) {
+          matches.push(i);
+        }
+      }
+    }
+
+    searchState.query = query;
+    searchState.matches = matches;
+
+    if (matches.length === 0) {
+      searchState.currentIndex = -1;
+      status.textContent = 'No matches';
+      status.style.color = '#ff3b5c';
+    } else {
+      const currentScroll = term.buffer.active.viewportY;
+      let nearestIndex = 0;
+      let minDiff = Infinity;
+      for (let idx = 0; idx < matches.length; idx++) {
+        const diff = Math.abs(matches[idx] - currentScroll);
+        if (diff < minDiff) {
+          minDiff = diff;
+          nearestIndex = idx;
+        }
+      }
+      searchState.currentIndex = nearestIndex;
+      scrollToMatch();
+    }
+  };
+
+  const scrollToMatch = () => {
+    if (searchState.currentIndex < 0 || searchState.currentIndex >= searchState.matches.length) return;
+    const lineIndex = searchState.matches[searchState.currentIndex];
+    term.scrollToLine(lineIndex);
+    status.textContent = `${searchState.currentIndex + 1} of ${searchState.matches.length}`;
+    status.style.color = '#888';
+  };
+
+  input.addEventListener('input', updateSearch);
+
+  prevBtn.addEventListener('click', () => {
+    if (searchState.matches.length === 0) return;
+    searchState.currentIndex = (searchState.currentIndex - 1 + searchState.matches.length) % searchState.matches.length;
+    scrollToMatch();
+  });
+
+  nextBtn.addEventListener('click', () => {
+    if (searchState.matches.length === 0) return;
+    searchState.currentIndex = (searchState.currentIndex + 1) % searchState.matches.length;
+    scrollToMatch();
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        prevBtn.click();
+      } else {
+        nextBtn.click();
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    }
+  });
+
+  const closeSearch = () => {
+    searchBar.style.display = 'none';
+    term.focus();
+  };
+
+  closeBtn.addEventListener('click', closeSearch);
+
+  panel.toggleSearch = () => {
+    if (searchBar.style.display === 'none') {
+      searchBar.style.display = 'flex';
+      input.focus();
+      input.select();
+      updateSearch();
+    } else {
+      closeSearch();
+    }
+  };
+}
+
 /* ══════════════════════════════════════════════════════════
    INIT TERMINAL SESSION (real SSH via Tauri)
-══════════════════════════════════════════════════════════ */
+   // ══════════════════════════════════════════════════════════ */
 async function initTermSession(tid, serverConfig, usernameOverride = null, forceUsernamePrompt = false) {
   const t = termTabs[tid];
   if (!t) return;
@@ -3647,7 +4031,7 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
       brightWhite: '#deeeff',
     },
     cursorBlink: true,
-    scrollback: 10000,
+    scrollback: t.srv?.scrollback_limit || 10000,
     allowProposedApi: true,
     rightClickSelectsWord: true,
   });
@@ -3656,12 +4040,23 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon());
   term.open(container);
+  initTerminalSearch(tid, term, t.panelEl);
 
   // Clipboard: Ctrl+Shift+C to copy, Ctrl+Shift+V to paste
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
-    // Ctrl+Shift+C → copy selection
+    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyF') {
+      e.preventDefault();
+      e.stopPropagation();
+      const panel = document.getElementById(`panel-${tid}`);
+      if (panel && typeof panel.toggleSearch === 'function') {
+        panel.toggleSearch();
+      }
+      return false;
+    }
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
+      e.preventDefault();
+      e.stopPropagation();
       const sel = term.getSelection();
       if (sel) navigator.clipboard.writeText(sel);
       return false;
@@ -3742,6 +4137,9 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
 
     t.unlisten = await listen(`${eventPrefix}-data-${sessionId}`, (event) => {
       queueTerminalOutput(t, event.payload);
+      if (t.isLogging && t.logFilePath) {
+        void invoke('append_to_file', { path: t.logFilePath, text: event.payload });
+      }
     });
 
     t.unlistenEof = await listen(`${eventPrefix}-eof-${sessionId}`, () => {
@@ -3815,7 +4213,7 @@ async function initLocalTermSession(tid, shellType = 'powershell') {
       brightWhite: '#deeeff',
     },
     cursorBlink: true,
-    scrollback: 10000,
+    scrollback: parseInt(localStorage.getItem('nodegrid_scrollback_limit')) || 10000,
     allowProposedApi: true,
     rightClickSelectsWord: true,
   });
@@ -3824,10 +4222,22 @@ async function initLocalTermSession(tid, shellType = 'powershell') {
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon());
   term.open(container);
+  initTerminalSearch(tid, term, t.panelEl);
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
+    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyF') {
+      e.preventDefault();
+      e.stopPropagation();
+      const panel = document.getElementById(`panel-${tid}`);
+      if (panel && typeof panel.toggleSearch === 'function') {
+        panel.toggleSearch();
+      }
+      return false;
+    }
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
+      e.preventDefault();
+      e.stopPropagation();
       const sel = term.getSelection();
       if (sel) navigator.clipboard.writeText(sel);
       return false;
@@ -3863,6 +4273,9 @@ async function initLocalTermSession(tid, shellType = 'powershell') {
     t.unlisten = await listen(`local-data-${sessionId}`, (event) => {
       const payload = String(event.payload || '');
       queueTerminalOutput(t, payload);
+      if (t.isLogging && t.logFilePath) {
+        void invoke('append_to_file', { path: t.logFilePath, text: payload });
+      }
 
       if (localShellType !== 'wsl') return;
       if (t.wslFallbackTimer !== null) return;
@@ -4174,6 +4587,35 @@ function sftpEntryIconMarkup(entry) {
   </span>`;
 }
 
+const lastMetricAlerts = new Map();
+
+function checkMetricAlerts(serverId, metrics) {
+  if (!metrics) return;
+  const server = SRV.find(s => s.id === serverId);
+  const serverName = server ? (server.name || server.host) : serverId;
+
+  const thresholds = [
+    { key: 'cpu_used_percent', name: 'CPU', value: metrics.cpu_used_percent },
+    { key: 'memory_used_percent', name: 'Memory', value: metrics.memory_used_percent },
+    { key: 'disk_used_percent', name: 'Disk', value: metrics.disk_used_percent }
+  ];
+
+  const now = Date.now();
+  const alertCooldownMs = 60000;
+
+  thresholds.forEach(t => {
+    const val = Number(t.value);
+    if (Number.isFinite(val) && val >= 90.0) {
+      const alertKey = `${serverId}-${t.key}`;
+      const lastAlertTime = lastMetricAlerts.get(alertKey) || 0;
+      if (now - lastAlertTime > alertCooldownMs) {
+        lastMetricAlerts.set(alertKey, now);
+        showToastWarning(`${serverName}: ${t.name} usage is high (${Math.round(val)}%)`);
+      }
+    }
+  });
+}
+
 async function refreshMetrics(serverId) {
   const state = getLiveMetricsState(serverId);
   if (state.loading) return;
@@ -4190,6 +4632,7 @@ async function refreshMetrics(serverId) {
     state.data = result || null;
     state.lastUpdatedMs = Number(result?.fetched_unix_ms) || Date.now();
     state.error = '';
+    checkMetricAlerts(serverId, result);
   } catch (e) {
     state.error = shortErrorText(e);
     state.lastUpdatedMs = Date.now();
@@ -5521,7 +5964,14 @@ function createSettingsModal() {
       </div>
       <div class="settings-body" id="settings-body">
         <div class="settings-list" id="settings-list"></div>
-        <button class="settings-add-btn" id="settings-add-btn">+ Add Server</button>
+        <div style="display:flex;gap:12px;margin-top:12px">
+          <button class="settings-add-btn" id="settings-add-btn" style="flex:1">+ Add Server</button>
+          <button class="settings-add-btn ghost" id="settings-devtools-btn" style="flex:1">&#x1f50d; Open DevTools</button>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button class="settings-add-btn ghost" id="settings-export-btn" style="flex:1">&#x1f4e5; Export Config</button>
+          <button class="settings-add-btn ghost" id="settings-import-btn" style="flex:1">&#x1f4e4; Import Config</button>
+        </div>
       </div>
       <div class="settings-form" id="settings-form" style="display:none">
         <div class="sf-title" id="sf-title">Add Server</div>
@@ -5603,6 +6053,16 @@ function createSettingsModal() {
             <input class="sf-input" id="sf-lng" type="number" step="0.0001" placeholder="-74.0060">
           </div>
         </div>
+        <div class="sf-row-pair">
+          <div class="sf-row">
+            <label class="sf-label">Keep-Alive (seconds)</label>
+            <input class="sf-input" id="sf-keepalive" type="number" min="0" value="0" placeholder="0 to disable">
+          </div>
+          <div class="sf-row">
+            <label class="sf-label">Scrollback Limit</label>
+            <input class="sf-input" id="sf-scrollback" type="number" min="0" value="10000" placeholder="10000">
+          </div>
+        </div>
         <div class="sf-actions">
           <button class="sf-cancel-btn" id="sf-cancel-btn">Cancel</button>
           <button class="sf-save-btn" id="sf-save-btn">Save Server</button>
@@ -5616,6 +6076,15 @@ function createSettingsModal() {
   document.getElementById('settings-overlay').addEventListener('click', closeSettings);
   document.getElementById('settings-close-btn').addEventListener('click', closeSettings);
   document.getElementById('settings-add-btn').addEventListener('click', () => showServerForm(null));
+  document.getElementById('settings-devtools-btn').addEventListener('click', async () => {
+    try {
+      await invoke('open_devtools');
+    } catch (err) {
+      console.warn('DevTools cannot be opened in this environment:', err);
+    }
+  });
+  document.getElementById('settings-export-btn').addEventListener('click', exportConfiguration);
+  document.getElementById('settings-import-btn').addEventListener('click', importConfiguration);
   document.getElementById('sf-cancel-btn').addEventListener('click', hideServerForm);
   document.getElementById('sf-save-btn').addEventListener('click', saveServerForm);
   document.getElementById('sf-browse-btn').addEventListener('click', browseKeyFile);
@@ -5623,6 +6092,82 @@ function createSettingsModal() {
   document.getElementById('sf-get-location-btn').addEventListener('click', geocodeTypedLocation);
   document.getElementById('sf-auth-method').addEventListener('change', toggleAuthFields);
   document.getElementById('sf-protocol').addEventListener('change', toggleAuthFields);
+}
+
+async function exportConfiguration() {
+  const chosen = await saveDialog({
+    title: 'Export Configuration',
+    defaultPath: 'terminey-config.json',
+  });
+  if (!chosen) return;
+  const localPath = Array.isArray(chosen) ? chosen[0] : chosen;
+  if (!localPath) return;
+
+  try {
+    const servers = await invoke('get_servers');
+    const folders = await invoke('get_folders');
+    const data = {
+      version: 1,
+      servers: servers || [],
+      folders: folders || []
+    };
+    const content = JSON.stringify(data, null, 2);
+    await invoke('write_text_file', { path: localPath, content });
+    showAlert({
+      title: 'Configuration Exported',
+      message: `Successfully exported ${servers.length} servers and ${folders.length} folders.`,
+      variant: 'success'
+    });
+  } catch (err) {
+    showError('Failed to export configuration', err);
+  }
+}
+
+async function importConfiguration() {
+  const picked = await open({
+    title: 'Select configuration file to import',
+    directory: false,
+    multiple: false,
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (!picked) return;
+  const localPath = Array.isArray(picked) ? picked[0] : picked;
+  if (!localPath) return;
+
+  const confirmed = await showConfirm({
+    title: 'Import Configuration',
+    message: 'Importing will add new connections and folders. Existing IDs might be updated. Do you want to proceed?',
+    confirmText: 'Import',
+    cancelText: 'Cancel'
+  });
+  if (!confirmed) return;
+
+  try {
+    const content = await invoke('read_text_file', { path: localPath });
+    const data = JSON.parse(content);
+    if (!data || !Array.isArray(data.servers) || !Array.isArray(data.folders)) {
+      throw new Error('Invalid configuration format. Must contain servers and folders arrays.');
+    }
+
+    for (const f of data.folders) {
+      await invoke('save_folder', { folder: f });
+    }
+    for (const s of data.servers) {
+      await invoke('save_server', { server: s });
+    }
+
+    showAlert({
+      title: 'Configuration Imported',
+      message: `Successfully imported ${data.servers.length} servers and ${data.folders.length} folders.`,
+      variant: 'success'
+    });
+
+    await loadServers();
+    renderFolderOptions();
+    renderServerList();
+  } catch (err) {
+    showError('Failed to import configuration', err);
+  }
 }
 
 function openSettings() {
@@ -5717,6 +6262,8 @@ function showServerForm(server) {
   document.getElementById('sf-location').value = server ? server.loc : '';
   document.getElementById('sf-lat').value = server ? server.lat : '';
   document.getElementById('sf-lng').value = server ? server.lng : '';
+  document.getElementById('sf-keepalive').value = server ? (server.keepalive_interval_secs || 0) : 0;
+  document.getElementById('sf-scrollback').value = server ? (server.scrollback_limit || 10000) : 10000;
   document.getElementById('sf-error').style.display = 'none';
 
   if (server && server._raw) {
@@ -5837,6 +6384,8 @@ async function saveServerForm() {
   const lng = parseFloat(document.getElementById('sf-lng').value) || 0;
   const folderId = normalizeFolderId(document.getElementById('sf-folder').value);
   const authMethod = document.getElementById('sf-auth-method').value;
+  const keepalive_interval_secs = parseInt(document.getElementById('sf-keepalive').value) || 0;
+  const scrollback_limit = parseInt(document.getElementById('sf-scrollback').value) || 10000;
 
   if (!name || !host) {
     showFormError('Name and Host are required.');
@@ -5864,6 +6413,7 @@ async function saveServerForm() {
   const server = {
     id: editingServerId || crypto.randomUUID(),
     name, icon, host, port, username, protocol, auth_method, location, lat, lng, folder_id: folderId,
+    keepalive_interval_secs, scrollback_limit,
   };
 
   try {
@@ -5919,6 +6469,8 @@ async function loadServers() {
         loc: c.location,
         lat: normalizeCoordinate(c.lat),
         lng: normalizeCoordinate(c.lng),
+        keepalive_interval_secs: c.keepalive_interval_secs || 0,
+        scrollback_limit: c.scrollback_limit || 10000,
         folderId: null,
         status: 'unknown',
         latencyMs: null,
@@ -5939,6 +6491,27 @@ async function loadServers() {
     const validServerIds = new Set(SRV.map((s) => s.id));
     for (const key of sftpCredentialCache.keys()) {
       if (!validServerIds.has(key)) sftpCredentialCache.delete(key);
+    }
+    const tabsToClose = [];
+    for (const [tid, tab] of Object.entries(termTabs)) {
+      if (tab.srvId) {
+        const matchingServer = SRV.find((s) => s.id === tab.srvId);
+        if (!matchingServer) {
+          tabsToClose.push(tid);
+        } else if (
+          tab.mode === 'ssh' &&
+          tab.srv &&
+          (tab.srv.host !== matchingServer.host ||
+            tab.srv.port !== matchingServer.port ||
+            tab.srv.username !== matchingServer.username ||
+            tab.srv.protocol !== matchingServer.protocol)
+        ) {
+          tabsToClose.push(tid);
+        }
+      }
+    }
+    for (const tid of tabsToClose) {
+      await closeTab(null, tid);
     }
   } catch (e) {
     console.error('Failed to load servers:', e);
@@ -6259,6 +6832,24 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
+// Add keyboard shortcut to toggle search
+document.addEventListener('keydown', (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f') {
+    if (activeTabId && termTabs[activeTabId] && (termTabs[activeTabId].mode === 'ssh' || termTabs[activeTabId].mode === 'local')) {
+      if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+        if (!document.activeElement.classList.contains('search-input')) {
+          return;
+        }
+      }
+      ev.preventDefault();
+      const panel = document.getElementById(`panel-${activeTabId}`);
+      if (panel && typeof panel.toggleSearch === 'function') {
+        panel.toggleSearch();
+      }
+    }
+  }
+});
+
 // Initialize shortcuts panel
 createShortcutsPanel();
 createShortcutsToggle();
@@ -6267,3 +6858,28 @@ createShortcutsToggle();
 loadServers();
 setInterval(() => { void refreshServerStatuses(); }, STATUS_REFRESH_INTERVAL_MS);
 setInterval(() => { void tickLiveMetricsRefresh(); }, METRICS_LIVE_REFRESH_INTERVAL_MS);
+
+// Intercept Ctrl+Shift+C globally in the capture phase to block inspect element tool from opening
+document.addEventListener('keydown', (ev) => {
+  if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const sel = window.getSelection().toString();
+    if (sel) {
+      navigator.clipboard.writeText(sel);
+    }
+  }
+}, true);
+
+window.addEventListener('focus', async () => {
+  if (activeTabId && termTabs[activeTabId] && termTabs[activeTabId].mode === 'vnc' && termTabs[activeTabId].rfb) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        termTabs[activeTabId].rfb.clipboardPaste(text);
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+});
