@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 
-use super::{AuthMethod, ConfigData, ConnectionProtocol, FolderConfig, ServerConfig};
+use super::{AuthMethod, ConfigData, ConnectionProtocol, FolderConfig, ServerConfig, LocalForwardConfig};
 
 const KEYRING_SERVICE: &str = "com.terminey.nodegrid";
 
@@ -77,6 +77,12 @@ struct PersistedServerConfig {
     lng: f64,
     #[serde(default)]
     folder_id: Option<String>,
+    #[serde(default)]
+    keepalive_interval_secs: Option<u64>,
+    #[serde(default)]
+    scrollback_limit: Option<u32>,
+    #[serde(default)]
+    local_forwards: Option<Vec<LocalForwardConfig>>,
 }
 
 fn default_server_icon() -> String {
@@ -195,6 +201,9 @@ fn to_runtime(data: PersistedConfigData) -> ConfigData {
             lat: server.lat,
             lng: server.lng,
             folder_id: server.folder_id,
+            keepalive_interval_secs: server.keepalive_interval_secs,
+            scrollback_limit: server.scrollback_limit,
+            local_forwards: server.local_forwards,
         })
         .collect();
 
@@ -265,6 +274,9 @@ fn to_persisted(data: &ConfigData) -> Result<PersistedConfigData> {
                 lat: server.lat,
                 lng: server.lng,
                 folder_id: server.folder_id.clone(),
+                keepalive_interval_secs: server.keepalive_interval_secs,
+                scrollback_limit: server.scrollback_limit,
+                local_forwards: server.local_forwards.clone(),
             })
         })
         .collect::<Result<Vec<_>>>()?;

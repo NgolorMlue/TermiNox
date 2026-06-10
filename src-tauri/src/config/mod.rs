@@ -3,6 +3,13 @@ pub mod store;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalForwardConfig {
+    pub local_port: u16,
+    pub remote_host: String,
+    pub remote_port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub id: String,
     pub name: String,
@@ -19,6 +26,12 @@ pub struct ServerConfig {
     pub lng: f64,
     #[serde(default)]
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub keepalive_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub scrollback_limit: Option<u32>,
+    #[serde(default)]
+    pub local_forwards: Option<Vec<LocalForwardConfig>>,
 }
 
 fn default_server_icon() -> String {

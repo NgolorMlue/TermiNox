@@ -2,16 +2,16 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import { open as tauriOpen, save as tauriSave } from '@tauri-apps/plugin-dialog';
 
-const STORAGE_KEY = 'nodegrid_servers';
-const FOLDER_STORAGE_KEY = 'nodegrid_folders';
+const STORAGE_KEY = 'terminox_servers';
+const FOLDER_STORAGE_KEY = 'terminox_folders';
 
-export const FOLDER_COLLAPSE_STORAGE_KEY = 'nodegrid_folder_collapse';
+export const FOLDER_COLLAPSE_STORAGE_KEY = 'terminox_folder_collapse';
 export const UNGROUPED_COLLAPSE_ID = '__ungrouped__';
 export const SESSION_FOLDER_ID = '__sessions__';
 export const SESSION_FOLDER_NAME = 'Sessions';
-export const SESSION_SHORTCUT_STORAGE_KEY = 'nodegrid_session_shortcuts';
+export const SESSION_SHORTCUT_STORAGE_KEY = 'terminox_session_shortcuts';
 export const SESSION_SHORTCUT_LIMIT = 300;
-export const RECENT_SESSION_STORAGE_KEY = 'nodegrid_recent_local_sessions';
+export const RECENT_SESSION_STORAGE_KEY = 'terminox_recent_local_sessions';
 export const RECENT_SESSION_LIMIT = 20;
 
 export const isTauri = Boolean(window.__TAURI_INTERNALS__);
@@ -113,6 +113,10 @@ const browserInvoke = async (cmd, args) => {
   if (cmd === 'ssh_clear_known_host') return 0;
   if (cmd === 'ssh_connect') throw new Error('SSH requires the desktop app');
   if (cmd.startsWith('telnet_')) throw new Error('Telnet requires the desktop app');
+  if (cmd === 'open_devtools') {
+    console.log('[TermiNox] Browser preview mode — DevTools are already open in your browser console');
+    return;
+  }
   if (cmd === 'open_external_url') {
     const url = String(args?.url || '').trim();
     if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
@@ -126,5 +130,5 @@ export const open = isTauri ? tauriOpen : async () => null;
 export const saveDialog = isTauri ? tauriSave : async () => null;
 
 if (!isTauri) {
-  console.warn('[NODE/GRID] Browser preview mode — SSH disabled, using localStorage');
+  console.warn('[TermiNox] Browser preview mode — SSH disabled, using localStorage');
 }

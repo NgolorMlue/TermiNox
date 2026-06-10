@@ -1,32 +1,13 @@
 use anyhow::Result;
 use russh::client;
 use russh::*;
-use russh_keys::key;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::config::{AuthMethod, ServerConfig};
-use crate::ssh::host_key::verify_known_host;
-
-/// Handler for the russh client connection.
-struct ClientHandler {
-    host: String,
-    port: u16,
-}
-
-#[async_trait::async_trait]
-impl client::Handler for ClientHandler {
-    type Error = anyhow::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &key::PublicKey,
-    ) -> std::result::Result<bool, Self::Error> {
-        verify_known_host(&self.host, self.port, server_public_key)
-    }
-}
+use super::common::{ClientHandler, auth_agent};
 
 /// Represents an active SSH session with a PTY channel.
 pub struct SshSession {
@@ -35,7 +16,7 @@ pub struct SshSession {
     /// Keep the task alive for the session lifetime.
     _read_task: tokio::task::JoinHandle<()>,
     /// Keep the session handle alive
-    _handle: client::Handle<ClientHandler>,
+    _handle: Arc<client::Handle<ClientHandler>>,
 }
 
 enum SessionCommand {
@@ -72,9 +53,15 @@ impl SshSession {
         initial_cols: u32,
         initial_rows: u32,
     ) -> Result<Self> {
-        let ssh_config = client::Config {
+        let mut ssh_config = client::Config {
             ..Default::default()
         };
+        if let Some(secs) = config.keepalive_interval_secs {
+            if secs > 0 {
+                ssh_config.keepalive_interval = Some(std::time::Duration::from_secs(secs));
+                ssh_config.keepalive_max = 3;
+            }
+        }
 
         let addr = format!("{}:{}", config.host, config.port);
         let handler = ClientHandler {
@@ -112,9 +99,11 @@ impl SshSession {
                 }
             }
             AuthMethod::Agent => {
-                Self::auth_agent(&mut session, &config.username).await?;
+                auth_agent(&mut session, &config.username).await?;
             }
         }
+
+        let session = Arc::new(session);
 
         // Open a session channel
         let channel = session
@@ -141,6 +130,69 @@ impl SshSession {
             .request_shell(false)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to request shell: {}", e))?;
+
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+        let shutdown_tx_clone = shutdown_tx.clone();
+
+        if let Some(forwards) = &config.local_forwards {
+            for forward in forwards {
+                let local_port = forward.local_port;
+                let remote_host = forward.remote_host.clone();
+                let remote_port = forward.remote_port;
+                let client_handle = session.clone();
+                let mut shutdown_rx = shutdown_tx.subscribe();
+
+                tokio::spawn(async move {
+                    let addr = format!("127.0.0.1:{}", local_port);
+                    let listener = match tokio::net::TcpListener::bind(&addr).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            log::error!("Failed to bind local port forward to {}: {}", addr, e);
+                            return;
+                        }
+                    };
+
+                    loop {
+                        tokio::select! {
+                            _ = shutdown_rx.recv() => {
+                                break;
+                            }
+                            conn = listener.accept() => {
+                                let (mut local_stream, _) = match conn {
+                                    Ok(c) => c,
+                                    Err(_) => break,
+                                };
+                                let client_handle = client_handle.clone();
+                                let remote_host = remote_host.clone();
+                                let mut shutdown_rx_conn = shutdown_rx.resubscribe();
+
+                                tokio::spawn(async move {
+                                    let channel: russh::Channel<_> = match client_handle.channel_open_direct_tcpip(
+                                        &remote_host,
+                                        remote_port as u32,
+                                        "127.0.0.1",
+                                        local_port as u32,
+                                    ).await {
+                                        Ok(ch) => ch,
+                                        Err(e) => {
+                                            log::error!("Failed to open direct-tcpip channel: {}", e);
+                                            return;
+                                        }
+                                    };
+
+                                    let mut channel_stream = channel.into_stream();
+
+                                    tokio::select! {
+                                        _ = shutdown_rx_conn.recv() => {}
+                                        _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut local_stream) => {}
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+        }
 
         // Queue control/input commands from Tauri handlers into the SSH task.
         let (command_tx, mut command_rx) = mpsc::unbounded_channel::<SessionCommand>();
@@ -241,6 +293,7 @@ impl SshSession {
                     }
                 }
             }
+            let _ = shutdown_tx_clone.send(());
         });
 
         Ok(SshSession {
@@ -250,64 +303,7 @@ impl SshSession {
         })
     }
 
-    /// Authenticate using the system SSH agent (Unix)
-    #[cfg(unix)]
-    async fn auth_agent(session: &mut client::Handle<ClientHandler>, username: &str) -> Result<()> {
-        let mut agent = russh_keys::agent::client::AgentClient::connect_env()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to SSH agent: {}", e))?;
 
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list agent keys: {}", e))?;
-
-        if identities.is_empty() {
-            anyhow::bail!("SSH agent has no keys loaded");
-        }
-
-        let mut current_agent = agent;
-        for id in &identities {
-            let (returned_agent, result) = session
-                .authenticate_future(username, id.clone(), current_agent)
-                .await;
-            current_agent = returned_agent;
-            match result {
-                Ok(true) => return Ok(()),
-                _ => continue,
-            }
-        }
-        anyhow::bail!("SSH agent authentication failed - no accepted keys")
-    }
-
-    /// Authenticate using Pageant on Windows
-    #[cfg(windows)]
-    async fn auth_agent(session: &mut client::Handle<ClientHandler>, username: &str) -> Result<()> {
-        // connect_pageant() returns Self directly (not a Result)
-        let mut agent = russh_keys::agent::client::AgentClient::connect_pageant().await;
-
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list Pageant keys: {}", e))?;
-
-        if identities.is_empty() {
-            anyhow::bail!("Pageant has no keys loaded");
-        }
-
-        let mut current_agent = agent;
-        for id in &identities {
-            let (returned_agent, result) = session
-                .authenticate_future(username, id.clone(), current_agent)
-                .await;
-            current_agent = returned_agent;
-            match result {
-                Ok(true) => return Ok(()),
-                _ => continue,
-            }
-        }
-        anyhow::bail!("Pageant authentication failed - no accepted keys")
-    }
 
     /// Write data (user keystrokes) to the SSH channel
     pub async fn write(&self, data: &[u8]) -> Result<()> {

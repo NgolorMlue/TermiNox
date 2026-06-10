@@ -22,6 +22,9 @@ use ssh::sftp::{
     create_dir as sftp_create_dir_impl, delete_entry as sftp_delete_entry_impl,
     download_file as sftp_download_file_impl, list_dir as sftp_list_dir_impl,
     read_file as sftp_read_file_impl, rename_entry as sftp_rename_entry_impl,
+    set_permissions as sftp_set_permissions_impl,
+    upload_dir as sftp_upload_dir_impl, download_dir as sftp_download_dir_impl,
+    create_symlink as sftp_create_symlink_impl,
     upload_file as sftp_upload_file_impl, write_file as sftp_write_file_impl, SftpListResponse,
     SftpReadFileResponse, SftpWriteFileResponse,
 };
@@ -761,6 +764,114 @@ async fn sftp_write_file(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn sftp_set_permissions(
+    server_id: String,
+    path: String,
+    chmod_octal: u32,
+    username_override: Option<String>,
+    password_override: Option<String>,
+    config: State<'_, ConfigStore>,
+) -> Result<(), String> {
+    let mut server = config
+        .get_server(&server_id)
+        .await
+        .ok_or_else(|| format!("Server not found: {}", server_id))?;
+    ensure_ssh_protocol(&server)?;
+    apply_auth_overrides(&mut server, username_override, password_override);
+
+    sftp_set_permissions_impl(&server, path, chmod_octal)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sftp_upload_dir(
+    server_id: String,
+    local_dir: String,
+    remote_dir: String,
+    username_override: Option<String>,
+    password_override: Option<String>,
+    config: State<'_, ConfigStore>,
+) -> Result<(), String> {
+    let mut server = config
+        .get_server(&server_id)
+        .await
+        .ok_or_else(|| format!("Server not found: {}", server_id))?;
+    ensure_ssh_protocol(&server)?;
+    apply_auth_overrides(&mut server, username_override, password_override);
+
+    sftp_upload_dir_impl(&server, local_dir, remote_dir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sftp_download_dir(
+    server_id: String,
+    remote_dir: String,
+    local_dir: String,
+    username_override: Option<String>,
+    password_override: Option<String>,
+    config: State<'_, ConfigStore>,
+) -> Result<(), String> {
+    let mut server = config
+        .get_server(&server_id)
+        .await
+        .ok_or_else(|| format!("Server not found: {}", server_id))?;
+    ensure_ssh_protocol(&server)?;
+    apply_auth_overrides(&mut server, username_override, password_override);
+
+    sftp_download_dir_impl(&server, remote_dir, local_dir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sftp_create_symlink(
+    server_id: String,
+    target: String,
+    path: String,
+    username_override: Option<String>,
+    password_override: Option<String>,
+    config: State<'_, ConfigStore>,
+) -> Result<(), String> {
+    let mut server = config
+        .get_server(&server_id)
+        .await
+        .ok_or_else(|| format!("Server not found: {}", server_id))?;
+    ensure_ssh_protocol(&server)?;
+    apply_auth_overrides(&mut server, username_override, password_override);
+
+    sftp_create_symlink_impl(&server, target, path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn append_to_file(path: String, text: String) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("Failed to open log file: {e}"))?;
+    file.write_all(text.as_bytes())
+        .map_err(|e| format!("Failed to write to log file: {e}"))?;
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 struct ServerStatusResponse {
     status: String,
@@ -829,6 +940,13 @@ async fn geocode_location(query: String) -> Result<lookup::GeocodeLocationRespon
     lookup::geocode_location(query).await
 }
 
+#[tauri::command]
+async fn open_devtools(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        window.open_devtools();
+    }
+}
+
 // ── Main ──
 
 
@@ -873,14 +991,22 @@ fn main() {
             sftp_list_dir,
             sftp_upload_file,
             sftp_download_file,
+            sftp_upload_dir,
+            sftp_download_dir,
             sftp_rename_entry,
             sftp_delete_entry,
             sftp_create_dir,
             sftp_read_file,
             sftp_write_file,
+            sftp_set_permissions,
+            sftp_create_symlink,
+            write_text_file,
+            read_text_file,
             check_server_status,
             lookup_ip_location,
             geocode_location,
+            open_devtools,
+            append_to_file,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

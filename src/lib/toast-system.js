@@ -1,3 +1,5 @@
+import { escapeHtml } from './metrics-helpers.js';
+
 /**
  * Toast Notification System
  * Provides non-intrusive notifications with screen reader support
@@ -146,38 +148,29 @@ function removeToast(toast) {
 /**
  * Show a success toast
  */
-export function showSuccess(message, duration) {
+export function showToastSuccess(message, duration) {
     return showToast({ message, type: 'success', duration });
 }
 
 /**
  * Show an error toast
  */
-export function showError(message, duration = 8000) {
+export function showToastError(message, duration = 8000) {
     return showToast({ message, type: 'error', duration });
 }
 
 /**
  * Show a warning toast
  */
-export function showWarning(message, duration) {
+export function showToastWarning(message, duration) {
     return showToast({ message, type: 'warning', duration });
 }
 
 /**
  * Show an info toast
  */
-export function showInfo(message, duration) {
+export function showToastInfo(message, duration) {
     return showToast({ message, type: 'info', duration });
-}
-
-/**
- * Escape HTML entities
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 // Add toast animations to document

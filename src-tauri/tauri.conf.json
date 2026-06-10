@@ -1,5 +1,5 @@
 {
-  "productName": "NodeGrid",
+  "productName": "TermiNox",
   "version": "2.0.0",
   "identifier": "com.terminey.nodegrid",
   "build": {
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "NODE/GRID — VPS Control",
+        "title": "TermiNox — VPS Control",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

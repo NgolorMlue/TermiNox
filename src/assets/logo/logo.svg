@@ -1,0 +1,102 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">TermiNox Circular Terminal App Logo</title>
+  <desc id="desc">A dark circular terminal logo with cyan-to-green neon ring, grid background, terminal prompt symbol, cursor, and TermiNox wordmark.</desc>
+
+  <defs>
+    <linearGradient id="ringGradient" x1="116" y1="120" x2="908" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00d9ff"/>
+      <stop offset="0.48" stop-color="#00f0b5"/>
+      <stop offset="1" stop-color="#7cff00"/>
+    </linearGradient>
+
+    <linearGradient id="promptGradient" x1="290" y1="260" x2="590" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00d9ff"/>
+      <stop offset="0.58" stop-color="#00f0b5"/>
+      <stop offset="1" stop-color="#8cff00"/>
+    </linearGradient>
+
+    <linearGradient id="textGradient" x1="180" y1="700" x2="850" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00cfff"/>
+      <stop offset="0.52" stop-color="#00d6ff"/>
+      <stop offset="0.56" stop-color="#44f23b"/>
+      <stop offset="1" stop-color="#7cff00"/>
+    </linearGradient>
+
+    <radialGradient id="bgGlow" cx="50%" cy="46%" r="57%">
+      <stop offset="0" stop-color="#102a32"/>
+      <stop offset="0.55" stop-color="#08141b"/>
+      <stop offset="1" stop-color="#020407"/>
+    </radialGradient>
+
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0  0 0 0 0 0.95  0 0 0 0 0.75  0 0 0 0.75 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="textGlow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <clipPath id="circleClip">
+      <circle cx="512" cy="512" r="448"/>
+    </clipPath>
+
+    <style>
+      .wordmark {
+        font-family: Orbitron, Eurostile, 'Segoe UI', Arial, sans-serif;
+        font-weight: 900;
+        font-style: italic;
+        letter-spacing: -8px;
+      }
+      .grid-line {
+        stroke: #00d9ff;
+        stroke-width: 3;
+        opacity: 0.13;
+      }
+    </style>
+  </defs>
+
+  <!-- transparent outer canvas -->
+  <circle cx="512" cy="512" r="458" fill="#020407"/>
+  <circle cx="512" cy="512" r="448" fill="url(#bgGlow)"/>
+
+  <!-- subtle inner tech panels / grid -->
+  <g clip-path="url(#circleClip)">
+    <path d="M120 120 L360 120 L235 310 L120 390 Z" fill="#0b2330" opacity="0.28"/>
+    <path d="M255 88 L585 88 L585 330 L375 330 Z" fill="#12333e" opacity="0.24"/>
+    <path d="M585 88 L910 88 L910 905 L585 905 Z" fill="#081c22" opacity="0.22"/>
+
+    <g>
+      <line class="grid-line" x1="585" y1="65" x2="585" y2="860"/>
+      <line class="grid-line" x1="705" y1="65" x2="705" y2="860"/>
+      <line class="grid-line" x1="825" y1="65" x2="825" y2="860"/>
+      <line class="grid-line" x1="945" y1="65" x2="945" y2="860"/>
+      <line class="grid-line" x1="360" y1="205" x2="960" y2="205"/>
+      <line class="grid-line" x1="360" y1="330" x2="960" y2="330"/>
+      <line class="grid-line" x1="360" y1="455" x2="960" y2="455"/>
+      <line class="grid-line" x1="360" y1="580" x2="960" y2="580"/>
+    </g>
+  </g>
+
+  <!-- neon outer ring -->
+  <circle cx="512" cy="512" r="454" fill="none" stroke="url(#ringGradient)" stroke-width="26" filter="url(#softGlow)"/>
+  <circle cx="512" cy="512" r="440" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="2"/>
+
+  <!-- terminal prompt symbol -->
+  <g filter="url(#softGlow)" stroke="url(#promptGradient)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M326 275 L505 427 L326 579"/>
+    <line x1="560" y1="592" x2="715" y2="592"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="168" y="800" class="wordmark" font-size="142" fill="url(#textGradient)" filter="url(#textGlow)">TermiNox</text>
+  <text x="168" y="800" class="wordmark" font-size="142" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.14">TermiNox</text>
+</svg>
