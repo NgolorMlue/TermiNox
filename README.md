@@ -7,7 +7,7 @@
 ![Rust Backend](https://img.shields.io/badge/backend-Rust-000000.svg)
 ![JavaScript Frontend](https://img.shields.io/badge/frontend-JavaScript-F7DF1E.svg)
 
-TermiNox is an open-source desktop application for managing and monitoring VPS and server infrastructure from a single interface.
+TermiNox is an open-source Tab Terminal desktop application for managing and monitoring multiple VPS and server infrastructure from a single interface.
 
 The app combines live infrastructure visibility, terminal access, file operations, session history, and fleet-wide controls into one desktop control surface.
 
