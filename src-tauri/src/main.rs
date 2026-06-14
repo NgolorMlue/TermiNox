@@ -2,20 +2,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod credential_escrow;
 mod local_shell;
 mod lookup;
+mod metrics_store;
 mod ssh;
+mod ssh_config_parser;
 mod telnet;
 mod vnc;
 
 use config::store::ConfigStore;
+use credential_escrow::CredentialEscrow;
+use metrics_store::{MetricsStore, MetricsSample};
 use config::{AuthMethod, ConnectionProtocol, FolderConfig, ServerConfig};
 use local_shell::LocalShellManager;
 #[cfg(target_os = "windows")]
 use local_shell::known_windows_shell_paths;
 use lookup::resolve_host_ip;
 use serde::{Deserialize, Serialize};
-use ssh::host_key::clear_known_host as clear_known_host_impl;
+use ssh::host_key::{clear_known_host as clear_known_host_impl, get_known_host_fingerprint as get_known_host_fingerprint_impl};
 use ssh::manager::SshSessionManager;
 use ssh::probe::{collect_metrics, ServerMetricsSnapshot};
 use ssh::sftp::{
@@ -123,6 +128,16 @@ fn ensure_ssh_protocol(server: &ServerConfig) -> Result<(), String> {
 
 // ── SSH / Telnet / VNC / Local Shell Commands ──
 
+/// Store a password in the credential escrow and return a single-use token.
+/// The token expires in 30 seconds and is consumed on first use.
+#[tauri::command]
+async fn store_credential_token(
+    password: String,
+    escrow: State<'_, CredentialEscrow>,
+) -> Result<String, String> {
+    Ok(escrow.store(password))
+}
+
 #[tauri::command]
 async fn ssh_connect(
     server_id: String,
@@ -130,8 +145,10 @@ async fn ssh_connect(
     rows: Option<u32>,
     username_override: Option<String>,
     password_override: Option<String>,
+    credential_token: Option<String>,
     ssh_mgr: State<'_, SshSessionManager>,
     config: State<'_, ConfigStore>,
+    escrow: State<'_, CredentialEscrow>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let mut server = config
@@ -140,13 +157,26 @@ async fn ssh_connect(
         .ok_or_else(|| format!("Server not found: {}", server_id))?;
     ensure_ssh_protocol(&server)?;
 
-    apply_auth_overrides(&mut server, username_override, password_override);
+    // Resolve password: credential token takes priority over direct password_override
+    let resolved_password = if let Some(token) = credential_token {
+        Some(escrow.claim(&token).ok_or("Credential token expired or invalid")?)
+    } else {
+        password_override
+    };
+
+    apply_auth_overrides(&mut server, username_override, resolved_password);
+
+    let jump_server = if let Some(ref jid) = server.jump_host_id.clone() {
+        config.get_server(jid).await
+    } else {
+        None
+    };
 
     let c = cols.unwrap_or(80);
     let r = rows.unwrap_or(24);
 
     ssh_mgr
-        .connect(&server, app, c, r)
+        .connect(&server, jump_server.as_ref(), app, c, r)
         .await
         .map_err(|e| e.to_string())
 }
@@ -189,6 +219,19 @@ async fn ssh_clear_known_host(
         .ok_or_else(|| format!("Server not found: {}", server_id))?;
 
     clear_known_host_impl(&server.host, server.port).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ssh_get_known_host_fingerprint(
+    server_id: String,
+    config: State<'_, ConfigStore>,
+) -> Result<Option<String>, String> {
+    let server = config
+        .get_server(&server_id)
+        .await
+        .ok_or_else(|| format!("Server not found: {}", server_id))?;
+
+    get_known_host_fingerprint_impl(&server.host, server.port).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -589,6 +632,7 @@ async fn get_host_device_info() -> Result<HostDeviceInfo, String> {
 async fn ssh_probe_metrics(
     server_id: String,
     config: State<'_, ConfigStore>,
+    metrics: State<'_, MetricsStore>,
 ) -> Result<ServerMetricsSnapshot, String> {
     let server = config
         .get_server(&server_id)
@@ -596,7 +640,24 @@ async fn ssh_probe_metrics(
         .ok_or_else(|| format!("Server not found: {}", server_id))?;
     ensure_ssh_protocol(&server)?;
 
-    collect_metrics(&server).await.map_err(|e| e.to_string())
+    let snapshot = collect_metrics(&server).await.map_err(|e| e.to_string())?;
+
+    metrics.push(&server_id, MetricsSample {
+        timestamp_ms: snapshot.fetched_unix_ms,
+        cpu_percent: snapshot.cpu_used_percent,
+        ram_percent: snapshot.memory_used_percent,
+        disk_percent: snapshot.disk_used_percent,
+    });
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+async fn get_metrics_history(
+    server_id: String,
+    metrics: State<'_, MetricsStore>,
+) -> Result<Vec<MetricsSample>, String> {
+    Ok(metrics.history(&server_id))
 }
 
 #[tauri::command]
@@ -872,6 +933,11 @@ async fn append_to_file(path: String, text: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn parse_ssh_config_command() -> Vec<ssh_config_parser::SshConfigEntry> {
+    ssh_config_parser::parse_ssh_config()
+}
+
 #[derive(Debug, Serialize)]
 struct ServerStatusResponse {
     status: String,
@@ -954,6 +1020,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(ConfigStore::new())
+        .manage(MetricsStore::new())
+        .manage(CredentialEscrow::new())
         .manage(SshSessionManager::new())
         .manage(TelnetSessionManager::new())
         .manage(LocalShellManager::new())
@@ -966,9 +1034,11 @@ fn main() {
             delete_server,
             delete_folder,
             reorder_servers,
+            store_credential_token,
             ssh_connect,
             telnet_connect,
             ssh_clear_known_host,
+            ssh_get_known_host_fingerprint,
             ssh_write,
             ssh_write_text,
             ssh_resize,
@@ -988,6 +1058,7 @@ fn main() {
             open_external_url,
             start_local_terminal,
             ssh_probe_metrics,
+            get_metrics_history,
             sftp_list_dir,
             sftp_upload_file,
             sftp_download_file,
@@ -1007,6 +1078,7 @@ fn main() {
             geocode_location,
             open_devtools,
             append_to_file,
+            parse_ssh_config_command,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

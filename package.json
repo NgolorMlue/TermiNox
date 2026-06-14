@@ -9,7 +9,9 @@
     "vite:build": "vite build",
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@novnc/novnc": "^1.6.0",
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "vite": "^6"
+    "vite": "^6",
+    "vitest": "^2"
   }
 }

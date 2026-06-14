@@ -83,6 +83,8 @@ struct PersistedServerConfig {
     scrollback_limit: Option<u32>,
     #[serde(default)]
     local_forwards: Option<Vec<LocalForwardConfig>>,
+    #[serde(default)]
+    jump_host_id: Option<String>,
 }
 
 fn default_server_icon() -> String {
@@ -204,6 +206,7 @@ fn to_runtime(data: PersistedConfigData) -> ConfigData {
             keepalive_interval_secs: server.keepalive_interval_secs,
             scrollback_limit: server.scrollback_limit,
             local_forwards: server.local_forwards,
+            jump_host_id: server.jump_host_id,
         })
         .collect();
 
@@ -277,6 +280,7 @@ fn to_persisted(data: &ConfigData) -> Result<PersistedConfigData> {
                 keepalive_interval_secs: server.keepalive_interval_secs,
                 scrollback_limit: server.scrollback_limit,
                 local_forwards: server.local_forwards.clone(),
+                jump_host_id: server.jump_host_id.clone(),
             })
         })
         .collect::<Result<Vec<_>>>()?;

@@ -7,7 +7,7 @@ use russh::client;
 use russh::Disconnect;
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::config::ServerConfig;
 use super::common::{ClientHandler, connect_authenticated};
@@ -47,7 +47,7 @@ pub struct SftpWriteFileResponse {
     pub chmod: String,
 }
 
-const MAX_EDITABLE_FILE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_EDITABLE_FILE_BYTES: usize = 50 * 1024 * 1024;
 
 fn join_remote(base: &str, name: &str) -> String {
     if base == "/" {
@@ -253,26 +253,52 @@ pub async fn read_file(config: &ServerConfig, path: String) -> Result<SftpReadFi
         .await
         .unwrap_or_else(|_| requested.to_string());
 
-    let bytes = sftp
-        .read(canonical.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", canonical, e))?;
-
-    if bytes.len() > MAX_EDITABLE_FILE_BYTES {
-        close_sftp(&session, &sftp, "sftp read file complete").await;
-        anyhow::bail!(
-            "File is too large to edit ({} bytes). Max supported size is {} bytes.",
-            bytes.len(),
-            MAX_EDITABLE_FILE_BYTES
-        );
-    }
-
-    let content = String::from_utf8(bytes)
-        .map_err(|_| anyhow::anyhow!("File appears to be binary or non-UTF-8"))?;
+    // Stat first to reject oversized files before reading
     let metadata = sftp
         .metadata(canonical.clone())
         .await
         .map_err(|e| anyhow::anyhow!("Failed to stat file '{}': {}", canonical, e))?;
+
+    let file_size = metadata.len();
+    if file_size as usize > MAX_EDITABLE_FILE_BYTES {
+        close_sftp(&session, &sftp, "sftp read file rejected").await;
+        anyhow::bail!(
+            "File is too large to edit ({} bytes). Max supported size is {} bytes.",
+            file_size,
+            MAX_EDITABLE_FILE_BYTES
+        );
+    }
+
+    // Read in 64 KB chunks to avoid single large allocation blocking the async executor
+    let mut remote_file = sftp
+        .open(canonical.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to open file '{}': {}", canonical, e))?;
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(
+        (file_size as usize).min(MAX_EDITABLE_FILE_BYTES),
+    );
+    let mut chunk = vec![0u8; 65536];
+    loop {
+        let n = remote_file
+            .read(&mut chunk)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", canonical, e))?;
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..n]);
+        if bytes.len() > MAX_EDITABLE_FILE_BYTES {
+            close_sftp(&session, &sftp, "sftp read file rejected").await;
+            anyhow::bail!(
+                "File exceeded max editable size ({} bytes) while reading.",
+                MAX_EDITABLE_FILE_BYTES
+            );
+        }
+    }
+
+    let content = String::from_utf8(bytes)
+        .map_err(|_| anyhow::anyhow!("File appears to be binary or non-UTF-8"))?;
 
     close_sftp(&session, &sftp, "sftp read file complete").await;
     Ok(SftpReadFileResponse {

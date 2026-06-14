@@ -51,6 +51,25 @@ Clear and re-trust only if you verified the new host key.",
     }
 }
 
+/// Returns the fingerprint(s) of stored known-host keys for the given host:port, or None if none stored.
+pub fn get_known_host_fingerprint(host: &str, port: u16) -> Result<Option<String>> {
+    for path in known_hosts_paths() {
+        if !path.exists() {
+            continue;
+        }
+        let matches = russh_keys::known_hosts::known_host_keys_path(host, port, &path)
+            .map_err(|e| anyhow::anyhow!("Failed to inspect known_hosts: {}", e))?;
+        if !matches.is_empty() {
+            let fps: Vec<String> = matches
+                .iter()
+                .map(|(_, key)| key.fingerprint())
+                .collect();
+            return Ok(Some(fps.join(", ")));
+        }
+    }
+    Ok(None)
+}
+
 pub fn clear_known_host(host: &str, port: u16) -> Result<u32> {
     let mut removed_total: u32 = 0;
 

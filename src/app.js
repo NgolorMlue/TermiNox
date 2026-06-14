@@ -90,12 +90,157 @@ import {
 /* ══════════════════════════════════════════════════════════
    SERVER STATE  (loaded from Rust backend)
 ══════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════
+   APP PREFERENCES  (persisted to localStorage)
+══════════════════════════════════════════════════════════ */
+const APP_PREFS_KEY = 'terminox_app_prefs';
+const TERM_THEMES = {
+  terminox: {
+    background: '#060a0e', foreground: '#b8cce0', cursor: '#00bfff', cursorAccent: '#060a0e',
+    selectionBackground: '#2a6090', selectionForeground: '#ffffff',
+    black: '#0b0f16', red: '#ff3b5c', green: '#00ffaa', yellow: '#f5a623',
+    blue: '#00bfff', magenta: '#cc66ff', cyan: '#00bfff', white: '#b8cce0',
+    brightBlack: '#3a5570', brightRed: '#ff6b88', brightGreen: '#33ffbb',
+    brightYellow: '#ffcc44', brightBlue: '#44ccff', brightMagenta: '#dd88ff',
+    brightCyan: '#44ddff', brightWhite: '#deeeff',
+  },
+  dracula: {
+    background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2', cursorAccent: '#282a36',
+    selectionBackground: '#44475a', selectionForeground: '#f8f8f2',
+    black: '#21222c', red: '#ff5555', green: '#50fa7b', yellow: '#f1fa8c',
+    blue: '#bd93f9', magenta: '#ff79c6', cyan: '#8be9fd', white: '#f8f8f2',
+    brightBlack: '#6272a4', brightRed: '#ff6e6e', brightGreen: '#69ff94',
+    brightYellow: '#ffffa5', brightBlue: '#d6acff', brightMagenta: '#ff92df',
+    brightCyan: '#a4ffff', brightWhite: '#ffffff',
+  },
+  monokai: {
+    background: '#272822', foreground: '#f8f8f2', cursor: '#f8f8f0', cursorAccent: '#272822',
+    selectionBackground: '#49483e', selectionForeground: '#f8f8f2',
+    black: '#272822', red: '#f92672', green: '#a6e22e', yellow: '#f4bf75',
+    blue: '#66d9e8', magenta: '#ae81ff', cyan: '#a1efe4', white: '#f8f8f2',
+    brightBlack: '#75715e', brightRed: '#f92672', brightGreen: '#a6e22e',
+    brightYellow: '#f4bf75', brightBlue: '#66d9e8', brightMagenta: '#ae81ff',
+    brightCyan: '#a1efe4', brightWhite: '#f9f8f5',
+  },
+  solarized: {
+    background: '#002b36', foreground: '#839496', cursor: '#839496', cursorAccent: '#002b36',
+    selectionBackground: '#073642', selectionForeground: '#93a1a1',
+    black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900',
+    blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5',
+    brightBlack: '#002b36', brightRed: '#cb4b16', brightGreen: '#586e75',
+    brightYellow: '#657b83', brightBlue: '#839496', brightMagenta: '#6c71c4',
+    brightCyan: '#93a1a1', brightWhite: '#fdf6e3',
+  },
+  onedark: {
+    background: '#282c34', foreground: '#abb2bf', cursor: '#528bff', cursorAccent: '#282c34',
+    selectionBackground: '#3e4451', selectionForeground: '#abb2bf',
+    black: '#282c34', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+    blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
+    brightBlack: '#5c6370', brightRed: '#e06c75', brightGreen: '#98c379',
+    brightYellow: '#e5c07b', brightBlue: '#61afef', brightMagenta: '#c678dd',
+    brightCyan: '#56b6c2', brightWhite: '#ffffff',
+  },
+  light: {
+    background: '#f5f5f0', foreground: '#24292e', cursor: '#0366d6', cursorAccent: '#f5f5f0',
+    selectionBackground: '#c8e1ff', selectionForeground: '#24292e',
+    black: '#24292e', red: '#d73a49', green: '#22863a', yellow: '#b08800',
+    blue: '#005cc5', magenta: '#6f42c1', cyan: '#0598bc', white: '#6a737d',
+    brightBlack: '#959da5', brightRed: '#cb2431', brightGreen: '#28a745',
+    brightYellow: '#dbab09', brightBlue: '#0366d6', brightMagenta: '#8a63d2',
+    brightCyan: '#1b7c83', brightWhite: '#d1d5da',
+  },
+};
+const APP_PREFS_DEFAULTS = Object.freeze({
+  fontSize: 13,
+  fontFamily: 'JetBrains Mono',
+  scrollback: 10000,
+  theme: 'terminox',
+  cursorBlink: true,
+  cursorStyle: 'block',
+  bellEnabled: true,
+  uiTheme: 'night',
+});
+let APP_PREFS = { ...APP_PREFS_DEFAULTS };
+
+function applyUiTheme(theme) {
+  const valid = ['night', 'dark', 'light'];
+  const t = valid.includes(theme) ? theme : 'night';
+  if (t === 'night') {
+    delete document.documentElement.dataset.uiTheme;
+  } else {
+    document.documentElement.dataset.uiTheme = t;
+  }
+}
+
+function loadAppPrefs() {
+  try {
+    const raw = localStorage.getItem(APP_PREFS_KEY);
+    if (raw) APP_PREFS = { ...APP_PREFS_DEFAULTS, ...JSON.parse(raw) };
+  } catch {}
+  applyUiTheme(APP_PREFS.uiTheme);
+}
+
+function saveAppPrefs(patch) {
+  APP_PREFS = { ...APP_PREFS, ...patch };
+  localStorage.setItem(APP_PREFS_KEY, JSON.stringify(APP_PREFS));
+  applyUiTheme(APP_PREFS.uiTheme);
+}
+
+function getTerminalOptions(scrollbackOverride) {
+  return {
+    fontFamily: `'${APP_PREFS.fontFamily}', monospace`,
+    fontSize: APP_PREFS.fontSize,
+    theme: TERM_THEMES[APP_PREFS.theme] || TERM_THEMES.terminox,
+    cursorBlink: APP_PREFS.cursorBlink,
+    cursorStyle: APP_PREFS.cursorStyle,
+    scrollback: scrollbackOverride ?? APP_PREFS.scrollback,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════
+   SFTP BOOKMARKS  (persisted to localStorage)
+══════════════════════════════════════════════════════════ */
+const SFTP_BOOKMARKS_KEY = 'terminox_sftp_bookmarks';
+let SFTP_BOOKMARKS = [];
+
+function loadSftpBookmarks() {
+  try {
+    const raw = localStorage.getItem(SFTP_BOOKMARKS_KEY);
+    if (raw) SFTP_BOOKMARKS = JSON.parse(raw);
+  } catch {}
+}
+
+function saveSftpBookmarks() {
+  localStorage.setItem(SFTP_BOOKMARKS_KEY, JSON.stringify(SFTP_BOOKMARKS));
+}
+
+function addSftpBookmark(serverId, path) {
+  const exists = SFTP_BOOKMARKS.some((b) => b.serverId === serverId && b.path === path);
+  if (!exists) {
+    SFTP_BOOKMARKS.push({ serverId, path });
+    saveSftpBookmarks();
+  }
+}
+
+function removeSftpBookmark(serverId, path) {
+  SFTP_BOOKMARKS = SFTP_BOOKMARKS.filter((b) => !(b.serverId === serverId && b.path === path));
+  saveSftpBookmarks();
+}
+
+function currentSftpBookmarkExists() {
+  const srv = selectedSftpServer();
+  if (!srv) return false;
+  const path = staticSftpState.path || '.';
+  return SFTP_BOOKMARKS.some((b) => b.serverId === srv.id && b.path === path);
+}
+
 let SRV = [];   // populated on startup from config
 let FOLDERS = [];
 let selId = null;
 let mainDashboardActive = false;
 let hostDeviceInfo = null;
 const LIVE_METRICS = new Map();
+const METRICS_HISTORY = new Map();
 const SERVER_INTEL = new Map();
 const SERVER_INTEL_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 let metricsSensitiveMasked = true;
@@ -109,6 +254,7 @@ const WSL_FALLBACK_DELAY_MS = 60000;
 const WSL_MISSING_PROMPT_MARKER = 'the windows subsystem for linux is not installed';
 let recentLocalSessions = [];
 let SESSION_SHORTCUTS = [];
+let sidebarSearchQuery = '';
 let sidebarSuppressClickUntilMs = 0;
 let sidebarPointerDragState = null;
 let collapsedFolderIds = loadCollapsedFolders();
@@ -1210,6 +1356,22 @@ function renderSidebar() {
     return;
   }
 
+  // Search mode: flatten all servers, skip folder structure.
+  if (sidebarSearchQuery) {
+    const q = sidebarSearchQuery.toLowerCase();
+    const matches = SRV.filter((s) =>
+      s.name.toLowerCase().includes(q) ||
+      s.host.toLowerCase().includes(q) ||
+      (s.loc && s.loc.toLowerCase().includes(q))
+    );
+    if (matches.length === 0) {
+      list.innerHTML = `<div style="padding:20px 12px;text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1px;line-height:1.8">No servers match "<em>${escapeHtml(sidebarSearchQuery)}</em>".</div>`;
+      return;
+    }
+    matches.forEach((server) => renderSidebarServerItem(server, list, rail));
+    return;
+  }
+
   const groupedServers = new Map();
   const sessionShortcuts = SESSION_SHORTCUTS.slice(0, SESSION_SHORTCUT_LIMIT);
   const groupedSessionShortcuts = new Map();
@@ -2077,9 +2239,20 @@ async function runServerContextAction(action, serverId) {
   }
 
   if (action === 'clear_known_host') {
+    let fingerprintNote = '';
+    try {
+      const fp = await invoke('ssh_get_known_host_fingerprint', { serverId: server.id });
+      if (fp) {
+        fingerprintNote = `\n\nStored fingerprint: ${fp}\n\nOnly clear if you have verified the new host key out-of-band. A changed key may indicate a MITM attack.`;
+      } else {
+        fingerprintNote = '\n\nNo stored host key found for this server.';
+      }
+    } catch {
+      // non-fatal — fingerprint lookup is best-effort
+    }
     const confirmed = await showConfirm({
       title: 'Clear Trusted Host Key',
-      message: `Clear trusted host key for "${server.name}" (${server.host}:${server.port})?\n\nThe next connection will trust and store the current host key again.`,
+      message: `Clear trusted host key for "${server.name}" (${server.host}:${server.port})?${fingerprintNote}\n\nThe next connection will trust and store the current host key again.`,
       variant: 'warning',
       confirmText: 'Clear',
     });
@@ -2456,6 +2629,53 @@ function hideSftpContextMenu() {
   menu.style.display = 'none';
   menu.innerHTML = '';
   staticSftpState.contextPath = '';
+}
+
+function hideTerminalContextMenu() {
+  const menu = document.getElementById('terminal-context-menu');
+  if (menu) { menu.style.display = 'none'; menu.innerHTML = ''; }
+}
+
+function showTerminalContextMenu(x, y, term, writeCommand, t) {
+  hideTerminalContextMenu();
+  const menu = document.getElementById('terminal-context-menu');
+  if (!menu) return;
+
+  const hasSel = Boolean(term.getSelection());
+  menu.innerHTML = [
+    `<button class="sftp-menu-item${hasSel ? '' : ' disabled'}" data-action="copy">Copy</button>`,
+    '<button class="sftp-menu-item" data-action="select-all">Select All</button>',
+    '<button class="sftp-menu-item" data-action="paste">Paste</button>',
+    '<div class="sftp-menu-sep"></div>',
+    '<button class="sftp-menu-item" data-action="clear">Clear</button>',
+  ].join('');
+
+  menu.style.display = 'block';
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.min(x, maxLeft)}px`;
+  menu.style.top = `${Math.min(y, maxTop)}px`;
+
+  menu.querySelectorAll('[data-action]').forEach((btn) => {
+    if (btn.classList.contains('disabled')) return;
+    btn.addEventListener('click', () => {
+      hideTerminalContextMenu();
+      const action = btn.dataset.action;
+      if (action === 'copy') {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+      } else if (action === 'select-all') {
+        term.selectAll();
+      } else if (action === 'paste') {
+        navigator.clipboard.readText().then((text) => {
+          if (text) queueTerminalInput(t, writeCommand, text);
+        }).catch(() => {});
+      } else if (action === 'clear') {
+        term.clear();
+      }
+    });
+  });
 }
 
 function showSftpContextMenu(x, y, entry) {
@@ -3120,6 +3340,8 @@ async function loadStaticSftpDir(targetPath) {
     pathEl.value = staticSftpState.path;
     renderStaticSftpRows(result?.entries || []);
     setStaticSftpStatus(`${(result?.entries || []).length} item(s) in ${staticSftpState.path}`);
+    const bookmarkBtn = document.getElementById('sftp-bookmark-btn');
+    if (bookmarkBtn) bookmarkBtn.style.color = currentSftpBookmarkExists() ? 'var(--warn)' : '';
   } catch (err) {
     if (requestId !== staticSftpState.requestSeq) return;
     setStaticSftpStatus(`SFTP failed: ${String(err)}`, true);
@@ -3213,6 +3435,7 @@ function addTermTab(options = {}) {
   btn.querySelector('.tab-term-inner').addEventListener('click', () => setActiveTab(tid));
   btn.querySelector('.tab-pin').addEventListener('click', (e) => togglePin(e, tid));
   btn.querySelector('.tab-close').addEventListener('click', (e) => closeTab(e, tid));
+  btn.querySelector('.tab-label').addEventListener('dblclick', (e) => { e.stopPropagation(); e.preventDefault(); startTabRename(tid); });
   document.getElementById('term-tab-area').insertBefore(btn, document.getElementById('tab-add-btn'));
 
   // Terminal panel with xterm container
@@ -3231,6 +3454,7 @@ function addTermTab(options = {}) {
       <div class="term-actions">
         <button class="term-btn" id="log-btn-${tid}">LOG</button>
         <button class="term-btn" id="clear-btn-${tid}">CLEAR</button>
+        <button class="term-btn" id="split-btn-${tid}">SPLIT</button>
         <button class="term-btn" id="reconnect-btn-${tid}">RECONNECT</button>
         <button class="term-btn danger" id="close-btn-${tid}">CLOSE</button>
       </div>
@@ -3243,6 +3467,7 @@ function addTermTab(options = {}) {
   // Wire up action buttons
   panel.querySelector(`#log-btn-${tid}`).addEventListener('click', () => toggleSessionLogging(tid));
   panel.querySelector(`#clear-btn-${tid}`).addEventListener('click', () => termClear(tid));
+  panel.querySelector(`#split-btn-${tid}`).addEventListener('click', () => toggleSplitPane(tid));
   panel.querySelector(`#reconnect-btn-${tid}`).addEventListener('click', () => termReconnect(tid));
   panel.querySelector(`#close-btn-${tid}`).addEventListener('click', () => closeTab(null, tid));
 
@@ -3326,6 +3551,7 @@ function addLocalTermTab(shellType = 'powershell', options = {}) {
 
   btn.querySelector('.tab-term-inner').addEventListener('click', () => setActiveTab(tid));
   btn.querySelector('.tab-close').addEventListener('click', (e) => closeTab(e, tid));
+  btn.querySelector('.tab-label').addEventListener('dblclick', (e) => { e.stopPropagation(); e.preventDefault(); startTabRename(tid); });
 
   const panel = document.createElement('div');
   panel.className = 'tab-panel term-panel';
@@ -3341,6 +3567,7 @@ function addLocalTermTab(shellType = 'powershell', options = {}) {
       <div class="term-actions">
         <button class="term-btn" id="log-btn-${tid}">LOG</button>
         <button class="term-btn" id="clear-btn-${tid}">CLEAR</button>
+        <button class="term-btn" id="split-btn-${tid}">SPLIT</button>
         <button class="term-btn" id="reconnect-btn-${tid}">RECONNECT</button>
         <button class="term-btn danger" id="close-btn-${tid}">CLOSE</button>
       </div>
@@ -3352,6 +3579,7 @@ function addLocalTermTab(shellType = 'powershell', options = {}) {
 
   panel.querySelector(`#log-btn-${tid}`).addEventListener('click', () => toggleSessionLogging(tid));
   panel.querySelector(`#clear-btn-${tid}`).addEventListener('click', () => termClear(tid));
+  panel.querySelector(`#split-btn-${tid}`).addEventListener('click', () => toggleSplitPane(tid));
   panel.querySelector(`#reconnect-btn-${tid}`).addEventListener('click', () => termReconnect(tid));
   panel.querySelector(`#close-btn-${tid}`).addEventListener('click', () => closeTab(null, tid));
 
@@ -4001,37 +4229,11 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
   const connectCommand = remoteCommand(t, 'connect');
 
   const container = document.getElementById(`xterm-${tid}`);
+  if (!container) return;
 
   // Create xterm.js terminal
   const term = new Terminal({
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 13,
-    theme: {
-      background: '#060a0e',
-      foreground: '#b8cce0',
-      cursor: '#00bfff',
-      cursorAccent: '#060a0e',
-      selectionBackground: '#1a284066',
-      selectionForeground: '#ffffff',
-      black: '#0b0f16',
-      red: '#ff3b5c',
-      green: '#00ffaa',
-      yellow: '#f5a623',
-      blue: '#00bfff',
-      magenta: '#cc66ff',
-      cyan: '#00bfff',
-      white: '#b8cce0',
-      brightBlack: '#3a5570',
-      brightRed: '#ff6b88',
-      brightGreen: '#33ffbb',
-      brightYellow: '#ffcc44',
-      brightBlue: '#44ccff',
-      brightMagenta: '#dd88ff',
-      brightCyan: '#44ddff',
-      brightWhite: '#deeeff',
-    },
-    cursorBlink: true,
-    scrollback: t.srv?.scrollback_limit || 10000,
+    ...getTerminalOptions(t.srv?.scrollback_limit || null),
     allowProposedApi: true,
     rightClickSelectsWord: true,
   });
@@ -4041,6 +4243,25 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
   term.loadAddon(new WebLinksAddon());
   term.open(container);
   initTerminalSearch(tid, term, t.panelEl);
+
+  term.onBell(() => {
+    if (!APP_PREFS.bellEnabled) return;
+    const tabLabel = document.querySelector(`#tabbtn-${tid} .tab-label`);
+    if (tabLabel) {
+      tabLabel.style.color = 'var(--warn)';
+      if (t.bellTimer) clearTimeout(t.bellTimer);
+      t.bellTimer = setTimeout(() => { tabLabel.style.color = ''; t.bellTimer = null; }, 2500);
+    }
+    if ('Notification' in window && Notification.permission === 'granted' && !document.hasFocus()) {
+      new Notification('TermiNox', { body: `Bell in ${t.srv?.name || 'terminal'}` });
+    }
+  });
+
+  container.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    showTerminalContextMenu(ev.clientX, ev.clientY, term, writeCommand, t);
+  }, { capture: true });
 
   // Clipboard: Ctrl+Shift+C to copy, Ctrl+Shift+V to paste
   term.attachCustomKeyEventHandler((e) => {
@@ -4058,21 +4279,27 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
       e.preventDefault();
       e.stopPropagation();
       const sel = term.getSelection();
-      if (sel) navigator.clipboard.writeText(sel);
+      if (sel) {
+        navigator.clipboard.writeText(sel).catch(() => {
+          const ta = document.createElement('textarea');
+          ta.value = sel;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
       return false;
     }
-    // Ctrl+Shift+V → paste from clipboard
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
+    // Ctrl+Shift+V or Ctrl+V → paste from clipboard
+    if ((e.ctrlKey && e.shiftKey && e.code === 'KeyV') || (e.ctrlKey && !e.shiftKey && e.code === 'KeyV')) {
+      e.preventDefault();
+      e.stopPropagation();
       navigator.clipboard.readText().then((text) => {
         if (text) queueTerminalInput(t, writeCommand, text);
-      });
-      return false;
-    }
-    // Ctrl+V (without shift) → also paste for convenience
-    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
-      navigator.clipboard.readText().then((text) => {
-        if (text) queueTerminalInput(t, writeCommand, text);
-      });
+      }).catch(() => {});
       return false;
     }
     return true;
@@ -4127,7 +4354,14 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
     };
     if (remoteProtocol === 'ssh') {
       if (connectUsername) connectPayload.usernameOverride = connectUsername;
-      if (passwordOverride !== null) connectPayload.passwordOverride = passwordOverride;
+      if (passwordOverride !== null) {
+        try {
+          connectPayload.credentialToken = await invoke('store_credential_token', { password: passwordOverride });
+        } catch {
+          // Fallback: send direct (escrow unavailable)
+          connectPayload.passwordOverride = passwordOverride;
+        }
+      }
     }
     const sessionId = await invoke(connectCommand, connectPayload);
 
@@ -4136,6 +4370,8 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
     updateTabStatus(tid, 'connected');
 
     t.unlisten = await listen(`${eventPrefix}-data-${sessionId}`, (event) => {
+      // Reset reconnect counter once data flows \u2014 session is healthy.
+      if (t._reconnectAttempt) t._reconnectAttempt = 0;
       queueTerminalOutput(t, event.payload);
       if (t.isLogging && t.logFilePath) {
         void invoke('append_to_file', { path: t.logFilePath, text: event.payload });
@@ -4147,9 +4383,37 @@ async function initTermSession(tid, serverConfig, usernameOverride = null, force
       updateTabStatus(tid, 'disconnected');
     });
 
-    t.unlistenClosed = await listen(`${eventPrefix}-closed-${sessionId}`, () => {
+    t.unlistenClosed = await listen(`${eventPrefix}-closed-${sessionId}`, async () => {
+      const tab = termTabs[tid];
+      if (!tab || tab._reconnecting) return;
+
       term.writeln('\r\n\x1b[38;2;255;59;92m\u2592 Connection lost.\x1b[0m');
       updateTabStatus(tid, 'disconnected');
+
+      // Auto-reconnect SSH sessions only (Telnet rarely drops mid-session).
+      if (remoteProtocol !== 'ssh' || !tab.srv) return;
+
+      const MAX_ATTEMPTS = 5;
+      const attempt = tab._reconnectAttempt || 0;
+      if (attempt >= MAX_ATTEMPTS) {
+        term.writeln('\r\n\x1b[38;2;255;59;92m\u2592 Auto-reconnect limit reached. Click RECONNECT to retry manually.\x1b[0m');
+        return;
+      }
+
+      tab._reconnecting = true;
+      const delays = [3000, 6000, 12000, 24000, 30000];
+      const delay = delays[Math.min(attempt, delays.length - 1)];
+
+      term.writeln(`\r\n\x1b[38;2;245;166;35m\u23f3 Auto-reconnect in ${delay / 1000}s\u2026 (attempt ${attempt + 1}/${MAX_ATTEMPTS})\x1b[0m`);
+      await new Promise((r) => setTimeout(r, delay));
+
+      const tAfterWait = termTabs[tid];
+      if (!tAfterWait) return; // tab was closed during wait
+      tAfterWait._reconnectAttempt = attempt + 1;
+      tAfterWait._reconnecting = false;
+
+      // termReconnect disposes the old terminal and starts a fresh initTermSession.
+      await termReconnect(tid);
     });
 
     term.onData((data) => {
@@ -4184,36 +4448,10 @@ async function initLocalTermSession(tid, shellType = 'powershell') {
   clearLocalWslFallbackTimer(t);
 
   const container = document.getElementById(`xterm-${tid}`);
+  if (!container) return;
 
   const term = new Terminal({
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 13,
-    theme: {
-      background: '#060a0e',
-      foreground: '#b8cce0',
-      cursor: '#00bfff',
-      cursorAccent: '#060a0e',
-      selectionBackground: '#1a284066',
-      selectionForeground: '#ffffff',
-      black: '#0b0f16',
-      red: '#ff3b5c',
-      green: '#00ffaa',
-      yellow: '#f5a623',
-      blue: '#00bfff',
-      magenta: '#cc66ff',
-      cyan: '#00bfff',
-      white: '#b8cce0',
-      brightBlack: '#3a5570',
-      brightRed: '#ff6b88',
-      brightGreen: '#33ffbb',
-      brightYellow: '#ffcc44',
-      brightBlue: '#44ccff',
-      brightMagenta: '#dd88ff',
-      brightCyan: '#44ddff',
-      brightWhite: '#deeeff',
-    },
-    cursorBlink: true,
-    scrollback: parseInt(localStorage.getItem('nodegrid_scrollback_limit')) || 10000,
+    ...getTerminalOptions(null),
     allowProposedApi: true,
     rightClickSelectsWord: true,
   });
@@ -4223,6 +4461,25 @@ async function initLocalTermSession(tid, shellType = 'powershell') {
   term.loadAddon(new WebLinksAddon());
   term.open(container);
   initTerminalSearch(tid, term, t.panelEl);
+
+  term.onBell(() => {
+    if (!APP_PREFS.bellEnabled) return;
+    const tabLabel = document.querySelector(`#tabbtn-${tid} .tab-label`);
+    if (tabLabel) {
+      tabLabel.style.color = 'var(--warn)';
+      if (t.bellTimer) clearTimeout(t.bellTimer);
+      t.bellTimer = setTimeout(() => { tabLabel.style.color = ''; t.bellTimer = null; }, 2500);
+    }
+    if ('Notification' in window && Notification.permission === 'granted' && !document.hasFocus()) {
+      new Notification('TermiNox', { body: `Bell in ${t.localShellType || 'terminal'}` });
+    }
+  });
+
+  container.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    showTerminalContextMenu(ev.clientX, ev.clientY, term, 'local_shell_write_text', t);
+  }, { capture: true });
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
@@ -4239,13 +4496,26 @@ async function initLocalTermSession(tid, shellType = 'powershell') {
       e.preventDefault();
       e.stopPropagation();
       const sel = term.getSelection();
-      if (sel) navigator.clipboard.writeText(sel);
+      if (sel) {
+        navigator.clipboard.writeText(sel).catch(() => {
+          const ta = document.createElement('textarea');
+          ta.value = sel;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
       return false;
     }
     if ((e.ctrlKey && e.shiftKey && e.code === 'KeyV') || (e.ctrlKey && !e.shiftKey && e.code === 'KeyV')) {
+      e.preventDefault();
+      e.stopPropagation();
       navigator.clipboard.readText().then((text) => {
         if (text) queueTerminalInput(t, 'local_shell_write_text', text);
-      });
+      }).catch(() => {});
       return false;
     }
     return true;
@@ -4385,10 +4655,315 @@ function togglePin(e, tid) {
   refreshTabVisibility();
 }
 
+/* ── TAB RENAME ── */
+function startTabRename(tid) {
+  const labelEl = document.querySelector(`#tabbtn-${tid} .tab-label`);
+  if (!labelEl) return;
+  const original = labelEl.textContent;
+  const input = document.createElement('input');
+  input.className = 'tab-rename-input';
+  input.value = termTabs[tid]?.customName || original;
+  input.style.cssText = 'width:80px;font-size:11px;padding:1px 4px;border:1px solid var(--accent);background:var(--bg3);color:var(--text);border-radius:3px;outline:none';
+  labelEl.replaceWith(input);
+  setTimeout(() => { input.focus(); input.select(); }, 0);
+  let cancelled = false;
+  const restore = (name) => {
+    const span = document.createElement('span');
+    span.className = 'tab-label';
+    span.textContent = name;
+    span.addEventListener('dblclick', (e) => { e.stopPropagation(); e.preventDefault(); startTabRename(tid); });
+    input.replaceWith(span);
+  };
+  const commit = () => {
+    if (cancelled) return;
+    cancelled = true; // prevent double-commit if blur fires after Enter
+    const newName = input.value.trim() || original;
+    const tab = termTabs[tid];
+    if (tab) tab.customName = newName;
+    restore(newName);
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { cancelled = true; restore(original); }
+    e.stopPropagation();
+  });
+}
+
+/* ══════════════════════════════════════════════════════════
+   SPLIT TERMINAL PANE
+══════════════════════════════════════════════════════════ */
+function toggleSplitPane(tid) {
+  const t = termTabs[tid];
+  if (!t) return;
+  if (t.split) {
+    closeSplitPane(tid);
+  } else {
+    if (!t.terminal) return; // session not ready yet
+    openSplitPane(tid);
+  }
+}
+
+function openSplitPane(tid) {
+  const t = termTabs[tid];
+  if (!t || t.split) return;
+
+  const termBody = t.panelEl.querySelector('.term-body');
+  const primaryContainer = document.getElementById(`xterm-${tid}`);
+  if (!termBody || !primaryContainer) return;
+
+  // Wrap existing xterm in primary pane
+  const primaryPane = document.createElement('div');
+  primaryPane.className = 'split-pane split-pane-primary';
+  termBody.insertBefore(primaryPane, primaryContainer);
+  primaryPane.appendChild(primaryContainer);
+
+  // Draggable divider
+  const divider = document.createElement('div');
+  divider.className = 'split-divider';
+  termBody.appendChild(divider);
+
+  // Secondary pane + container
+  const secondaryPane = document.createElement('div');
+  secondaryPane.className = 'split-pane split-pane-secondary';
+  const secondaryContainer = document.createElement('div');
+  secondaryContainer.className = 'xterm-container';
+  secondaryContainer.id = `xterm-${tid}-b`;
+  secondaryPane.appendChild(secondaryContainer);
+  termBody.appendChild(secondaryPane);
+
+  termBody.classList.add('split-active');
+
+  // Placeholder split object — populated by initSplitSession
+  t.split = { terminal: null, fitAddon: null, sessionId: null, unlisten: null, unlistenEof: null, unlistenClosed: null, resizeObserver: null };
+
+  // Update button
+  const btn = document.getElementById(`split-btn-${tid}`);
+  if (btn) { btn.textContent = 'UNSPLIT'; btn.classList.add('split-active-btn'); }
+
+  try { t.fitAddon?.fit(); } catch {}
+  wireSplitDivider(tid, divider, primaryPane, secondaryPane);
+  void initSplitSession(tid);
+}
+
+function wireSplitDivider(tid, divider, pane1, pane2) {
+  let dragging = false;
+  let startX = 0, startF1 = 0, startF2 = 0;
+
+  divider.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startF1 = parseFloat(pane1.style.flex) || 1;
+    startF2 = parseFloat(pane2.style.flex) || 1;
+    divider.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const total = pane1.offsetWidth + pane2.offsetWidth;
+    if (total === 0) return;
+    const dx = e.clientX - startX;
+    const totalFlex = startF1 + startF2;
+    const frac = dx / total;
+    let f1 = startF1 + frac * totalFlex;
+    let f2 = startF2 - frac * totalFlex;
+    const min = 0.15 * totalFlex;
+    if (f1 < min) { f1 = min; f2 = totalFlex - min; }
+    if (f2 < min) { f2 = min; f1 = totalFlex - min; }
+    pane1.style.flex = String(f1);
+    pane2.style.flex = String(f2);
+  };
+
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const t = termTabs[tid];
+    try { t?.fitAddon?.fit(); } catch {}
+    try { t?.split?.fitAddon?.fit(); } catch {}
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  divider._cleanup = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+}
+
+async function initSplitSession(tid) {
+  const t = termTabs[tid];
+  if (!t || !t.split) return;
+
+  const container = document.getElementById(`xterm-${tid}-b`);
+  if (!container) return;
+
+  const term2 = new Terminal({
+    ...getTerminalOptions(t.srv?.scrollback_limit || null),
+    allowProposedApi: true,
+    rightClickSelectsWord: true,
+  });
+
+  const fitAddon2 = new FitAddon();
+  term2.loadAddon(fitAddon2);
+  term2.loadAddon(new WebLinksAddon());
+  term2.open(container);
+
+  const sp = t.split;
+  sp.terminal = term2;
+  sp.fitAddon = fitAddon2;
+
+  // Context menu
+  const writeCmd = t.mode === 'local' ? 'local_shell_write_text' : remoteCommand(t, 'write_text');
+  container.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    showTerminalContextMenu(ev.clientX, ev.clientY, term2, writeCmd, t);
+  }, { capture: true });
+
+  // Clipboard shortcuts
+  term2.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
+      e.preventDefault(); e.stopPropagation();
+      const sel = term2.getSelection();
+      if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+      return false;
+    }
+    if ((e.ctrlKey && e.shiftKey && e.code === 'KeyV') || (e.ctrlKey && !e.shiftKey && e.code === 'KeyV')) {
+      e.preventDefault(); e.stopPropagation();
+      navigator.clipboard.readText().then((text) => {
+        if (text && sp.sessionId) invoke(writeCmd, { sessionId: sp.sessionId, data: text }).catch(() => {});
+      }).catch(() => {});
+      return false;
+    }
+    return true;
+  });
+
+  // ResizeObserver
+  const ro = new ResizeObserver(() => { try { fitAddon2.fit(); } catch {} });
+  ro.observe(container);
+  sp.resizeObserver = ro;
+
+  await new Promise(r => setTimeout(r, 100));
+  try { fitAddon2.fit(); } catch {}
+
+  if (t.mode === 'local') {
+    await connectSplitLocalSession(tid, term2, sp);
+  } else {
+    await connectSplitSshSession(tid, term2, sp);
+  }
+}
+
+async function connectSplitSshSession(tid, term2, sp) {
+  const t = termTabs[tid];
+  if (!t || !t.split || !t.srv) return;
+  const srv = t.srv;
+  const eventPrefix = remoteEventPrefix(t);
+  const writeCmd = remoteCommand(t, 'write_text');
+  const resizeCmd = remoteCommand(t, 'resize');
+  const connectCmd = remoteCommand(t, 'connect');
+
+  const creds = await resolveTerminalCredentials(term2, srv, t.usernameOverride, false);
+  if (creds.cancelled || !t.split) { term2.writeln('\x1b[38;2;58;85;112mCancelled.\x1b[0m'); return; }
+
+  term2.writeln('\x1b[38;2;0;191;255m▒ Connecting to ' + srv.name + '…\x1b[0m');
+  try {
+    const payload = { serverId: srv.id, cols: term2.cols, rows: term2.rows };
+    if (creds.username) payload.usernameOverride = creds.username;
+    if (creds.passwordOverride !== null) {
+      try { payload.credentialToken = await invoke('store_credential_token', { password: creds.passwordOverride }); }
+      catch { payload.passwordOverride = creds.passwordOverride; }
+    }
+    const sessionId = await invoke(connectCmd, payload);
+    if (!t.split) { invoke(remoteCommand(t, 'disconnect'), { sessionId }).catch(() => {}); return; }
+    sp.sessionId = sessionId;
+
+    sp.unlisten = await listen(`${eventPrefix}-data-${sessionId}`, (ev) => { if (sp.terminal) sp.terminal.write(ev.payload); });
+    sp.unlistenEof = await listen(`${eventPrefix}-eof-${sessionId}`, () => { sp.terminal?.writeln('\r\n\x1b[38;2;245;166;35m▒ Connection closed.\x1b[0m'); });
+    sp.unlistenClosed = await listen(`${eventPrefix}-closed-${sessionId}`, () => { sp.terminal?.writeln('\r\n\x1b[38;2;255;59;92m▒ Connection lost.\x1b[0m'); });
+
+    term2.onData((data) => { if (sp.sessionId) invoke(writeCmd, { sessionId: sp.sessionId, data }).catch(() => {}); });
+    term2.onResize(({ cols, rows }) => { if (sp.sessionId) invoke(resizeCmd, { sessionId: sp.sessionId, cols, rows }).catch(() => {}); });
+  } catch (err) {
+    term2.writeln(`\r\n\x1b[38;2;255;59;92m▒ Failed: ${err}\x1b[0m`);
+  }
+}
+
+async function connectSplitLocalSession(tid, term2, sp) {
+  const t = termTabs[tid];
+  if (!t || !t.split) return;
+  const shellType = t.localShellType || 'powershell';
+
+  term2.writeln(`\x1b[38;2;0;191;255m▒ Starting ${localShellLabel(shellType)}…\x1b[0m`);
+  try {
+    const sessionId = await invoke('local_shell_connect', { shellType, cols: term2.cols, rows: term2.rows });
+    if (!t.split) { invoke('local_shell_disconnect', { sessionId }).catch(() => {}); return; }
+    sp.sessionId = sessionId;
+
+    sp.unlisten = await listen(`local-data-${sessionId}`, (ev) => { if (sp.terminal) sp.terminal.write(String(ev.payload || '')); });
+    sp.unlistenEof = await listen(`local-eof-${sessionId}`, () => { sp.terminal?.writeln('\r\n\x1b[38;2;245;166;35m▒ Shell exited.\x1b[0m'); });
+    sp.unlistenClosed = await listen(`local-closed-${sessionId}`, () => { sp.terminal?.writeln('\r\n\x1b[38;2;255;59;92m▒ Shell closed.\x1b[0m'); });
+
+    term2.onData((data) => { if (sp.sessionId) invoke('local_shell_write_text', { sessionId: sp.sessionId, data }).catch(() => {}); });
+    term2.onResize(({ cols, rows }) => { if (sp.sessionId) invoke('local_shell_resize', { sessionId: sp.sessionId, cols, rows }).catch(() => {}); });
+  } catch (err) {
+    term2.writeln(`\r\n\x1b[38;2;255;59;92m▒ Failed: ${err}\x1b[0m`);
+  }
+}
+
+async function closeSplitPane(tid) {
+  const t = termTabs[tid];
+  if (!t || !t.split) return;
+  const sp = t.split;
+
+  // Disconnect backend
+  if (sp.sessionId) {
+    const cmd = t.mode === 'local' ? 'local_shell_disconnect' : remoteCommand(t, 'disconnect');
+    try { await invoke(cmd, { sessionId: sp.sessionId }); } catch {}
+  }
+
+  // Clean up listeners + xterm
+  if (sp.unlisten) sp.unlisten();
+  if (sp.unlistenEof) sp.unlistenEof();
+  if (sp.unlistenClosed) sp.unlistenClosed();
+  if (sp.resizeObserver) sp.resizeObserver.disconnect();
+  if (sp.terminal) sp.terminal.dispose();
+  t.split = null;
+
+  // Restore DOM
+  const termBody = t.panelEl?.querySelector('.term-body');
+  if (termBody) {
+    const primaryContainer = document.getElementById(`xterm-${tid}`);
+    const primaryPane = termBody.querySelector('.split-pane-primary');
+    const divider = termBody.querySelector('.split-divider');
+    const secondaryPane = termBody.querySelector('.split-pane-secondary');
+
+    if (primaryContainer && primaryPane) {
+      termBody.insertBefore(primaryContainer, primaryPane);
+      primaryPane.remove();
+    }
+    if (divider) { if (divider._cleanup) divider._cleanup(); divider.remove(); }
+    if (secondaryPane) secondaryPane.remove();
+    termBody.classList.remove('split-active');
+    if (primaryContainer) { primaryContainer.style.flex = ''; }
+  }
+
+  // Update button
+  const btn = document.getElementById(`split-btn-${tid}`);
+  if (btn) { btn.textContent = 'SPLIT'; btn.classList.remove('split-active-btn'); }
+
+  try { t.fitAddon?.fit(); } catch {}
+}
+
 async function closeTab(e, tid) {
   if (e) e.stopPropagation();
   const t = termTabs[tid]; if (!t) return;
   const wasActive = activeTabId === tid;
+
+  // Split pane cleanup (non-VNC only, but guard either way)
+  if (t.split) await closeSplitPane(tid);
 
   // VNC mode cleanup
   if (t.mode === 'vnc') {
@@ -4418,6 +4993,7 @@ async function closeTab(e, tid) {
     if (t.unlistenClosed) t.unlistenClosed();
     clearTerminalIoQueues(t);
     // Clean up xterm
+    if (t.bellTimer) { clearTimeout(t.bellTimer); t.bellTimer = null; }
     if (t.resizeObserver) t.resizeObserver.disconnect();
     if (t.terminal) t.terminal.dispose();
   }
@@ -4443,6 +5019,7 @@ function termClear(tid) {
 
 async function termReconnect(tid) {
   const t = termTabs[tid]; if (!t) return;
+  if (t.split) await closeSplitPane(tid);
   clearLocalWslFallbackTimer(t);
   if (t.mode === 'local') flushTerminalInput(t, 'local_shell_write_text');
   else flushTerminalInput(t, remoteCommand(t, 'write_text'));
@@ -4633,6 +5210,12 @@ async function refreshMetrics(serverId) {
     state.lastUpdatedMs = Number(result?.fetched_unix_ms) || Date.now();
     state.error = '';
     checkMetricAlerts(serverId, result);
+    try {
+      const history = await invoke('get_metrics_history', { serverId });
+      METRICS_HISTORY.set(serverId, Array.isArray(history) ? history : []);
+    } catch {
+      // history is optional — don't fail the whole refresh
+    }
   } catch (e) {
     state.error = shortErrorText(e);
     state.lastUpdatedMs = Date.now();
@@ -4754,6 +5337,21 @@ function renderMetrics(s) {
   });
 
   const diskColor = disk !== null ? (disk > 80 ? '#ff3b5c' : disk > 65 ? '#f5a623' : '#00bfff') : '#444';
+
+  const history = METRICS_HISTORY.get(s.id) || [];
+  const cpuHistory = history.map(p => p.cpu_percent).filter(v => v != null);
+  const ramHistory = history.map(p => p.ram_percent).filter(v => v != null);
+  const diskHistory = history.map(p => p.disk_percent).filter(v => v != null);
+  const hasHistory = cpuHistory.length >= 2 || ramHistory.length >= 2 || diskHistory.length >= 2;
+  const sparkCpuHtml = cpuHistory.length >= 2
+    ? sparklineSvg(cpuHistory.map(v => Math.round(v)), cpuColor)
+    : '<div class="mx-spark-empty">Refresh to collect data</div>';
+  const sparkRamHtml = ramHistory.length >= 2
+    ? sparklineSvg(ramHistory.map(v => Math.round(v)), ramColor)
+    : '<div class="mx-spark-empty">Refresh to collect data</div>';
+  const sparkDiskHtml = diskHistory.length >= 2
+    ? sparklineSvg(diskHistory.map(v => Math.round(v)), diskColor)
+    : '<div class="mx-spark-empty">Refresh to collect data</div>';
 
   mc.innerHTML = `
     <div class="mx-shell">
@@ -4929,6 +5527,27 @@ function renderMetrics(s) {
           ` : '<div class="mx-card-note">Connect via SSH to view resource data</div>'}
         </div>
       </div>
+
+      <!-- History Sparklines -->
+      ${hasHistory ? `
+      <div class="mx-sparklines">
+        <div class="mx-spark-card">
+          <div class="mx-spark-title">CPU History</div>
+          ${sparkCpuHtml}
+          ${cpuHistory.length >= 2 ? `<div class="mx-spark-sub">avg ${seriesAvg(cpuHistory.map(v => Math.round(v)))}% · ${cpuHistory.length} samples</div>` : ''}
+        </div>
+        <div class="mx-spark-card">
+          <div class="mx-spark-title">Memory History</div>
+          ${sparkRamHtml}
+          ${ramHistory.length >= 2 ? `<div class="mx-spark-sub">avg ${seriesAvg(ramHistory.map(v => Math.round(v)))}% · ${ramHistory.length} samples</div>` : ''}
+        </div>
+        <div class="mx-spark-card">
+          <div class="mx-spark-title">Disk History</div>
+          ${sparkDiskHtml}
+          ${diskHistory.length >= 2 ? `<div class="mx-spark-sub">avg ${seriesAvg(diskHistory.map(v => Math.round(v)))}% · ${diskHistory.length} samples</div>` : ''}
+        </div>
+      </div>
+      ` : ''}
 
       <!-- Footer -->
       <div class="mx-footer">
@@ -5952,6 +6571,361 @@ async function startSessionFromModal() {
   fail('Unsupported session type.');
 }
 
+/* ══════════════════════════════════════════════════════════
+   COMMAND PALETTE  (Ctrl+P)
+══════════════════════════════════════════════════════════ */
+let cpActive = false;
+let cpIndex = 0;
+let cpResults = [];
+
+function openCommandPalette() {
+  let el = document.getElementById('command-palette');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'command-palette';
+    el.innerHTML = `
+      <div id="cp-overlay"></div>
+      <div id="cp-box">
+        <div id="cp-search-wrap">
+          <span id="cp-icon">&#x1f50d;</span>
+          <input id="cp-input" placeholder="Search servers or type a command…" autocomplete="off" spellcheck="false">
+        </div>
+        <div id="cp-list"></div>
+      </div>`;
+    document.body.appendChild(el);
+    document.getElementById('cp-overlay').addEventListener('click', closeCommandPalette);
+    document.getElementById('cp-input').addEventListener('input', renderCpResults);
+    document.getElementById('cp-input').addEventListener('keydown', handleCpKey);
+  }
+  el.style.display = 'flex';
+  cpActive = true;
+  cpIndex = 0;
+  document.getElementById('cp-input').value = '';
+  renderCpResults();
+  document.getElementById('cp-input').focus();
+}
+
+function closeCommandPalette() {
+  const el = document.getElementById('command-palette');
+  if (el) el.style.display = 'none';
+  cpActive = false;
+}
+
+function renderCpResults() {
+  const q = (document.getElementById('cp-input')?.value || '').toLowerCase().trim();
+  const list = document.getElementById('cp-list');
+  if (!list) return;
+
+  cpResults = SRV
+    .filter((s) => !q || s.name.toLowerCase().includes(q) || (s.host || '').toLowerCase().includes(q))
+    .slice(0, 10)
+    .map((s) => ({ type: 'server', srv: s }));
+
+  if (!cpResults.length) {
+    list.innerHTML = '<div class="cp-empty">No servers match</div>';
+    return;
+  }
+
+  list.innerHTML = cpResults.map((r, i) => {
+    const s = r.srv;
+    const proto = serverProtocol(s).toUpperCase();
+    const dotColor = sDot(s._status || 'unknown');
+    return `<div class="cp-item ${i === cpIndex ? 'active' : ''}" data-idx="${i}">
+      <div class="cp-dot" style="background:${dotColor};box-shadow:0 0 5px ${dotColor}"></div>
+      <div class="cp-info">
+        <span class="cp-name">${escapeHtml(s.name)}</span>
+        <span class="cp-meta">${escapeHtml(s.host || '')} · ${proto}</span>
+      </div>
+      <span class="cp-action">Connect</span>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.cp-item').forEach((item) => {
+    item.addEventListener('mouseenter', () => {
+      cpIndex = parseInt(item.dataset.idx, 10);
+      renderCpResults();
+    });
+    item.addEventListener('click', () => executeCpItem(parseInt(item.dataset.idx, 10)));
+  });
+}
+
+function handleCpKey(e) {
+  if (e.key === 'Escape') { closeCommandPalette(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); cpIndex = Math.min(cpIndex + 1, cpResults.length - 1); renderCpResults(); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); cpIndex = Math.max(cpIndex - 1, 0); renderCpResults(); }
+  if (e.key === 'Enter') { e.preventDefault(); executeCpItem(cpIndex); }
+}
+
+function executeCpItem(idx) {
+  const r = cpResults[idx];
+  if (!r) return;
+  closeCommandPalette();
+  if (r.type === 'server') {
+    selectSrv(r.srv.id);
+    addTermTab({ serverId: r.srv.id });
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   APP PREFERENCES PANEL
+══════════════════════════════════════════════════════════ */
+function openPrefsPanel() {
+  let el = document.getElementById('prefs-panel-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'prefs-panel-overlay';
+    el.innerHTML = `
+      <div id="prefs-panel">
+        <div class="prefs-header">
+          <span class="prefs-title">&#x2699; App Preferences</span>
+          <button class="prefs-close" id="prefs-close-btn">&times;</button>
+        </div>
+        <div class="prefs-body">
+          <div class="prefs-section">UI Theme</div>
+          <div class="prefs-row">
+            <div class="ui-theme-group" id="pref-ui-theme-group">
+              <button class="ui-theme-btn" data-theme="night" type="button">
+                <div class="ui-theme-swatch night"></div>Night
+              </button>
+              <button class="ui-theme-btn" data-theme="dark" type="button">
+                <div class="ui-theme-swatch dark"></div>Dark
+              </button>
+              <button class="ui-theme-btn" data-theme="light" type="button">
+                <div class="ui-theme-swatch light"></div>Light
+              </button>
+            </div>
+          </div>
+          <div class="prefs-section">Terminal Appearance</div>
+          <div class="prefs-row">
+            <label class="prefs-label">Font Size</label>
+            <div class="prefs-range-wrap">
+              <input type="range" id="pref-fontsize" min="10" max="22" step="1" class="prefs-range">
+              <span class="prefs-range-val" id="pref-fontsize-val"></span>
+            </div>
+          </div>
+          <div class="prefs-row">
+            <label class="prefs-label">Font Family</label>
+            <select id="pref-fontfamily" class="prefs-select">
+              <option value="JetBrains Mono">JetBrains Mono</option>
+              <option value="Consolas">Consolas</option>
+              <option value="Courier New">Courier New</option>
+              <option value="Fira Code">Fira Code</option>
+              <option value="Source Code Pro">Source Code Pro</option>
+              <option value="monospace">System Monospace</option>
+            </select>
+          </div>
+          <div class="prefs-row">
+            <label class="prefs-label">Color Theme</label>
+            <select id="pref-theme" class="prefs-select">
+              <option value="terminox">TermiNox (default)</option>
+              <option value="dracula">Dracula</option>
+              <option value="monokai">Monokai</option>
+              <option value="solarized">Solarized Dark</option>
+              <option value="onedark">One Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+          <div class="prefs-row">
+            <label class="prefs-label">Cursor Style</label>
+            <select id="pref-cursor" class="prefs-select">
+              <option value="block">Block</option>
+              <option value="underline">Underline</option>
+              <option value="bar">Bar</option>
+            </select>
+          </div>
+          <div class="prefs-row">
+            <label class="prefs-label">Cursor Blink</label>
+            <label class="prefs-toggle"><input type="checkbox" id="pref-cursorblink"><span class="prefs-toggle-track"></span></label>
+          </div>
+          <div class="prefs-section">Terminal Behavior</div>
+          <div class="prefs-row">
+            <label class="prefs-label">Scrollback Lines</label>
+            <input type="number" id="pref-scrollback" min="1000" max="100000" step="1000" class="prefs-number">
+          </div>
+          <div class="prefs-row">
+            <label class="prefs-label">Bell Notification</label>
+            <label class="prefs-toggle"><input type="checkbox" id="pref-bell"><span class="prefs-toggle-track"></span></label>
+          </div>
+          <div class="prefs-section">SSH</div>
+          <div class="prefs-row">
+            <label class="prefs-label">Import from ~/.ssh/config</label>
+            <button class="prefs-btn" id="pref-import-ssh-config">Import</button>
+          </div>
+        </div>
+        <div class="prefs-footer">
+          <span class="prefs-note">Changes apply live — Save to persist</span>
+          <button class="prefs-btn primary" id="prefs-save-btn">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+    document.getElementById('prefs-close-btn').addEventListener('click', closePrefsPanel);
+    el.addEventListener('click', (e) => { if (e.target === el) closePrefsPanel(); });
+    document.getElementById('prefs-save-btn').addEventListener('click', applyAndSavePrefs);
+    document.getElementById('pref-fontsize').addEventListener('input', (e) => {
+      document.getElementById('pref-fontsize-val').textContent = e.target.value + 'px';
+      applyTerminalPrefsLive({ fontSize: parseInt(e.target.value, 10) });
+    });
+    document.getElementById('pref-fontfamily').addEventListener('change', (e) => {
+      applyTerminalPrefsLive({ fontFamily: e.target.value });
+    });
+    document.getElementById('pref-theme').addEventListener('change', (e) => {
+      applyTerminalPrefsLive({ theme: e.target.value });
+    });
+    document.getElementById('pref-cursor').addEventListener('change', (e) => {
+      applyTerminalPrefsLive({ cursorStyle: e.target.value });
+    });
+    document.getElementById('pref-cursorblink').addEventListener('change', (e) => {
+      applyTerminalPrefsLive({ cursorBlink: e.target.checked });
+    });
+    document.getElementById('pref-import-ssh-config').addEventListener('click', importSshConfig);
+    document.getElementById('pref-ui-theme-group').addEventListener('click', (e) => {
+      const btn = e.target.closest('.ui-theme-btn');
+      if (!btn) return;
+      document.querySelectorAll('#pref-ui-theme-group .ui-theme-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyUiTheme(btn.dataset.theme);
+    });
+  }
+  // Populate current values
+  document.querySelectorAll('#pref-ui-theme-group .ui-theme-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.theme === (APP_PREFS.uiTheme || 'night'));
+  });
+  document.getElementById('pref-fontsize').value = APP_PREFS.fontSize;
+  document.getElementById('pref-fontsize-val').textContent = APP_PREFS.fontSize + 'px';
+  document.getElementById('pref-fontfamily').value = APP_PREFS.fontFamily;
+  document.getElementById('pref-theme').value = APP_PREFS.theme;
+  document.getElementById('pref-cursor').value = APP_PREFS.cursorStyle;
+  document.getElementById('pref-cursorblink').checked = APP_PREFS.cursorBlink;
+  document.getElementById('pref-scrollback').value = APP_PREFS.scrollback;
+  document.getElementById('pref-bell').checked = APP_PREFS.bellEnabled;
+  el.style.display = 'flex';
+}
+
+function closePrefsPanel() {
+  const el = document.getElementById('prefs-panel-overlay');
+  if (el) el.style.display = 'none';
+}
+
+function applyTerminalPrefsLive(patch) {
+  const merged = { ...APP_PREFS, ...patch };
+  const theme = TERM_THEMES[merged.theme] || TERM_THEMES.terminox;
+  const fontFamily = `'${merged.fontFamily}', monospace`;
+  Object.values(termTabs).forEach(t => {
+    const term = t.terminal;
+    if (!term) return;
+    term.options.theme = theme;
+    term.options.fontFamily = fontFamily;
+    term.options.fontSize = merged.fontSize;
+    term.options.cursorStyle = merged.cursorStyle;
+    term.options.cursorBlink = merged.cursorBlink;
+    try { t.fitAddon?.fit(); } catch { }
+  });
+}
+
+function applyAndSavePrefs() {
+  const activeThemeBtn = document.querySelector('#pref-ui-theme-group .ui-theme-btn.active');
+  saveAppPrefs({
+    uiTheme: activeThemeBtn?.dataset.theme || APP_PREFS_DEFAULTS.uiTheme,
+    fontSize: parseInt(document.getElementById('pref-fontsize').value, 10) || APP_PREFS_DEFAULTS.fontSize,
+    fontFamily: document.getElementById('pref-fontfamily').value || APP_PREFS_DEFAULTS.fontFamily,
+    theme: document.getElementById('pref-theme').value || APP_PREFS_DEFAULTS.theme,
+    cursorStyle: document.getElementById('pref-cursor').value || APP_PREFS_DEFAULTS.cursorStyle,
+    cursorBlink: document.getElementById('pref-cursorblink').checked,
+    scrollback: parseInt(document.getElementById('pref-scrollback').value, 10) || APP_PREFS_DEFAULTS.scrollback,
+    bellEnabled: document.getElementById('pref-bell').checked,
+  });
+  closePrefsPanel();
+}
+
+async function importSshConfig() {
+  try {
+    const entries = await invoke('parse_ssh_config_command');
+    if (!entries || entries.length === 0) {
+      await showAlert({ title: 'SSH Config', message: 'No hosts found in ~/.ssh/config', variant: 'info' });
+      return;
+    }
+    showSshConfigImportDialog(entries);
+  } catch (err) {
+    await showAlert({ title: 'Import Failed', message: String(err), variant: 'error' });
+  }
+}
+
+function showSshConfigImportDialog(entries) {
+  const existing = new Set(SRV.map((s) => `${s.host}:${s.port}`));
+  let el = document.getElementById('ssh-import-dialog');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'ssh-import-dialog';
+    el.innerHTML = `
+      <div id="ssh-import-box">
+        <div class="prefs-header">
+          <span class="prefs-title">&#x1f4e5; Import SSH Config</span>
+          <button class="prefs-close" id="ssh-import-close">&times;</button>
+        </div>
+        <div class="prefs-body" id="ssh-import-list"></div>
+        <div class="prefs-footer">
+          <button class="prefs-btn" id="ssh-import-cancel">Cancel</button>
+          <button class="prefs-btn primary" id="ssh-import-confirm">Import Selected</button>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+    document.getElementById('ssh-import-close').addEventListener('click', () => { el.style.display = 'none'; });
+    document.getElementById('ssh-import-cancel').addEventListener('click', () => { el.style.display = 'none'; });
+    document.getElementById('ssh-import-confirm').addEventListener('click', () => doSshConfigImport(el, entries));
+  }
+  const list = document.getElementById('ssh-import-list');
+  list.innerHTML = entries.map((e, i) => {
+    const key = `${e.hostname}:${e.port}`;
+    const alreadyIn = existing.has(key);
+    return `<label class="prefs-row ssh-import-row ${alreadyIn ? 'dimmed' : ''}">
+      <input type="checkbox" class="ssh-import-check" data-idx="${i}" ${alreadyIn ? '' : 'checked'}>
+      <div class="cp-info">
+        <span class="cp-name">${escapeHtml(e.alias)}</span>
+        <span class="cp-meta">${escapeHtml(e.hostname)}:${e.port}${e.user ? ' · ' + escapeHtml(e.user) : ''}${alreadyIn ? ' (already added)' : ''}</span>
+      </div>
+    </label>`;
+  }).join('');
+  el.style.display = 'flex';
+  // update entries reference in confirm handler
+  document.getElementById('ssh-import-confirm').onclick = () => doSshConfigImport(el, entries);
+}
+
+async function doSshConfigImport(dialogEl, entries) {
+  const checks = dialogEl.querySelectorAll('.ssh-import-check:checked');
+  if (!checks.length) { dialogEl.style.display = 'none'; return; }
+  let added = 0;
+  for (const chk of checks) {
+    const e = entries[parseInt(chk.dataset.idx, 10)];
+    if (!e) continue;
+    try {
+      await invoke('add_server', {
+        name: e.alias,
+        host: e.hostname,
+        port: e.port,
+        protocol: 'ssh',
+        username: e.user || '',
+        authMethod: e.identity_file ? 'Key' : 'Agent',
+        keyPath: e.identity_file || null,
+        passphrase: null,
+        password: null,
+        folderId: null,
+        icon: null,
+        lat: null,
+        lng: null,
+        location: null,
+        keepaliveIntervalSecs: null,
+        scrollbackLimit: null,
+        jumpHostId: null,
+      });
+      added++;
+    } catch (err) {
+      console.warn('Import failed for', e.alias, err);
+    }
+  }
+  dialogEl.style.display = 'none';
+  if (added > 0) await loadServers();
+}
+
 function createSettingsModal() {
   const modal = document.createElement('div');
   modal.id = 'settings-modal';
@@ -5971,6 +6945,9 @@ function createSettingsModal() {
         <div style="display:flex;gap:12px;margin-top:8px">
           <button class="settings-add-btn ghost" id="settings-export-btn" style="flex:1">&#x1f4e5; Export Config</button>
           <button class="settings-add-btn ghost" id="settings-import-btn" style="flex:1">&#x1f4e4; Import Config</button>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button class="settings-add-btn ghost" id="settings-prefs-btn" style="flex:1">&#x2699; App Preferences</button>
         </div>
       </div>
       <div class="settings-form" id="settings-form" style="display:none">
@@ -6053,6 +7030,12 @@ function createSettingsModal() {
             <input class="sf-input" id="sf-lng" type="number" step="0.0001" placeholder="-74.0060">
           </div>
         </div>
+        <div class="sf-row" id="sf-jump-row">
+          <label class="sf-label">Jump Host (SSH only)</label>
+          <select class="sf-input" id="sf-jump-host">
+            <option value="">None (direct connection)</option>
+          </select>
+        </div>
         <div class="sf-row-pair">
           <div class="sf-row">
             <label class="sf-label">Keep-Alive (seconds)</label>
@@ -6085,6 +7068,7 @@ function createSettingsModal() {
   });
   document.getElementById('settings-export-btn').addEventListener('click', exportConfiguration);
   document.getElementById('settings-import-btn').addEventListener('click', importConfiguration);
+  document.getElementById('settings-prefs-btn').addEventListener('click', () => { closeSettings(); openPrefsPanel(); });
   document.getElementById('sf-cancel-btn').addEventListener('click', hideServerForm);
   document.getElementById('sf-save-btn').addEventListener('click', saveServerForm);
   document.getElementById('sf-browse-btn').addEventListener('click', browseKeyFile);
@@ -6176,6 +7160,18 @@ function openSettings() {
   renderServerList();
 }
 
+function renderJumpHostOptions(selectedJumpHostId = '', excludeServerId = null) {
+  const select = document.getElementById('sf-jump-host');
+  if (!select) return;
+  const sshServers = SRV.filter(
+    (s) => s.protocol === 'ssh' && s.id !== excludeServerId
+  );
+  select.innerHTML = `<option value="">None (direct connection)</option>` +
+    sshServers.map((s) =>
+      `<option value="${escapeHtml(s.id)}" ${s.id === selectedJumpHostId ? 'selected' : ''}>${escapeHtml(s.name)} (${escapeHtml(s.host)})</option>`
+    ).join('');
+}
+
 function renderFolderOptions(selectedFolderId = '') {
   const select = document.getElementById('sf-folder');
   if (!select) return;
@@ -6264,6 +7260,7 @@ function showServerForm(server) {
   document.getElementById('sf-lng').value = server ? server.lng : '';
   document.getElementById('sf-keepalive').value = server ? (server.keepalive_interval_secs || 0) : 0;
   document.getElementById('sf-scrollback').value = server ? (server.scrollback_limit || 10000) : 10000;
+  renderJumpHostOptions(server?._raw?.jump_host_id || '', server?.id || null);
   document.getElementById('sf-error').style.display = 'none';
 
   if (server && server._raw) {
@@ -6301,6 +7298,7 @@ function toggleAuthFields() {
   document.getElementById('sf-key-row').style.display = isSsh && method === 'Key' ? '' : 'none';
   document.getElementById('sf-passphrase-row').style.display = isSsh && method === 'Key' ? '' : 'none';
   document.getElementById('sf-password-row').style.display = isSsh && method === 'Password' ? '' : 'none';
+  document.getElementById('sf-jump-row').style.display = isSsh ? '' : 'none';
 }
 
 async function browseKeyFile() {
@@ -6386,6 +7384,7 @@ async function saveServerForm() {
   const authMethod = document.getElementById('sf-auth-method').value;
   const keepalive_interval_secs = parseInt(document.getElementById('sf-keepalive').value) || 0;
   const scrollback_limit = parseInt(document.getElementById('sf-scrollback').value) || 10000;
+  const jump_host_id = (protocol === 'ssh' ? document.getElementById('sf-jump-host').value : '') || null;
 
   if (!name || !host) {
     showFormError('Name and Host are required.');
@@ -6413,7 +7412,7 @@ async function saveServerForm() {
   const server = {
     id: editingServerId || crypto.randomUUID(),
     name, icon, host, port, username, protocol, auth_method, location, lat, lng, folder_id: folderId,
-    keepalive_interval_secs, scrollback_limit,
+    keepalive_interval_secs, scrollback_limit, jump_host_id,
   };
 
   try {
@@ -6532,6 +7531,34 @@ async function loadServers() {
     if (selId !== null) showStaticSftpForServer(); else showStaticSftpEmpty();
   }
   void refreshServerStatuses();
+
+  // Offer session restore on first load only (snapshot present + no tabs open yet).
+  const snapshotRaw = localStorage.getItem('terminox_session_snapshot');
+  if (snapshotRaw && Object.keys(termTabs).length === 0) {
+    localStorage.removeItem('terminox_session_snapshot');
+    try {
+      const snapshot = JSON.parse(snapshotRaw);
+      if (Array.isArray(snapshot) && snapshot.length > 0) {
+        const restorable = snapshot.filter((entry) => SRV.some((s) => s.id === entry.serverId));
+        if (restorable.length > 0) {
+          const names = restorable.map((entry) => SRV.find((s) => s.id === entry.serverId)?.name).filter(Boolean);
+          const restore = await showConfirm({
+            title: 'Restore previous session?',
+            message: `Reopen connections to: ${names.join(', ')}?`,
+            confirmText: 'Restore',
+            cancelText: 'Start fresh',
+          });
+          if (restore) {
+            for (const entry of restorable) {
+              addTermTab({ serverId: entry.serverId });
+            }
+          }
+        }
+      }
+    } catch {
+      // Malformed snapshot — ignore.
+    }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -6665,6 +7692,57 @@ document.getElementById('sftp-view-list-btn').addEventListener('click', () => se
 document.getElementById('sftp-view-grid-btn').addEventListener('click', () => setSftpViewMode('grid'));
 document.getElementById('sftp-upload-btn').addEventListener('click', () => uploadFileToRemoteDir(staticSftpState.path || '.'));
 document.getElementById('sftp-new-file-btn').addEventListener('click', () => createSftpFile(staticSftpState.path || '.'));
+
+// SFTP drag-drop upload
+(function wireSftpDragDrop() {
+  const wrap = document.getElementById('sftp-table-wrap-static');
+  if (!wrap) return;
+
+  wrap.addEventListener('dragover', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (selectedSftpServer()) wrap.classList.add('sftp-drop-active');
+  });
+
+  wrap.addEventListener('dragleave', (ev) => {
+    if (!wrap.contains(ev.relatedTarget)) wrap.classList.remove('sftp-drop-active');
+  });
+
+  wrap.addEventListener('drop', async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    wrap.classList.remove('sftp-drop-active');
+
+    const srv = selectedSftpServer();
+    if (!srv) return;
+
+    const files = Array.from(ev.dataTransfer?.files || []);
+    if (!files.length) return;
+
+    const baseDir = String(staticSftpState.path || '.').trim() || '.';
+    setSftpControlsDisabled(true);
+
+    for (const file of files) {
+      // Tauri exposes native path on the File object
+      const localPath = file.path;
+      if (!localPath) continue;
+      const filename = String(localPath).split(/[\\/]/).pop() || file.name || 'upload.bin';
+      const remotePath = remoteJoinPath(baseDir, filename);
+      setStaticSftpStatus(`Uploading ${filename} ...`);
+      try {
+        await invokeSftp('sftp_upload_file', srv, { localPath: String(localPath), remotePath });
+      } catch (e) {
+        setStaticSftpStatus(`Upload failed: ${e}`);
+        setSftpControlsDisabled(false);
+        return;
+      }
+    }
+
+    setSftpControlsDisabled(false);
+    setStaticSftpStatus(`Uploaded ${files.length} file${files.length > 1 ? 's' : ''}`);
+    void loadStaticSftpDir();
+  });
+}());
 document.getElementById('sftp-refresh-btn').addEventListener('click', () => loadStaticSftpDir());
 document.getElementById('sftp-go-btn').addEventListener('click', () => loadStaticSftpDir());
 document.getElementById('sftp-up-btn').addEventListener('click', () => {
@@ -6675,6 +7753,52 @@ document.getElementById('sftp-up-btn').addEventListener('click', () => {
 });
 document.getElementById('sftp-path-input').addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter') loadStaticSftpDir();
+});
+document.getElementById('sftp-bookmark-btn').addEventListener('click', () => {
+  const srv = selectedSftpServer();
+  if (!srv) return;
+  const path = staticSftpState.path || '.';
+  const btn = document.getElementById('sftp-bookmark-btn');
+  if (currentSftpBookmarkExists()) {
+    removeSftpBookmark(srv.id, path);
+    if (btn) btn.style.color = '';
+  } else {
+    addSftpBookmark(srv.id, path);
+    if (btn) btn.style.color = 'var(--warn)';
+  }
+});
+document.getElementById('sftp-bookmarks-list-btn').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const dropdown = document.getElementById('sftp-bookmarks-dropdown');
+  if (!dropdown) return;
+  const srv = selectedSftpServer();
+  const mine = srv ? SFTP_BOOKMARKS.filter((b) => b.serverId === srv.id) : [];
+  if (!mine.length) {
+    dropdown.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text2)">No bookmarks for this server</div>';
+  } else {
+    dropdown.innerHTML = mine.map((b) =>
+      `<button class="sftp-menu-item" data-path="${escapeHtml(b.path)}">${escapeHtml(b.path)}</button>`
+    ).join('');
+    dropdown.querySelectorAll('[data-path]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        dropdown.style.display = 'none';
+        const inp = document.getElementById('sftp-path-input');
+        if (inp) inp.value = btn.dataset.path;
+        loadStaticSftpDir(btn.dataset.path);
+      });
+    });
+  }
+  const rect = ev.currentTarget.getBoundingClientRect();
+  dropdown.style.left = `${rect.left}px`;
+  dropdown.style.top = `${rect.bottom + 4}px`;
+  dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+});
+document.addEventListener('click', (ev) => {
+  const dropdown = document.getElementById('sftp-bookmarks-dropdown');
+  const btn = document.getElementById('sftp-bookmarks-list-btn');
+  if (dropdown && dropdown.style.display !== 'none' && !dropdown.contains(ev.target) && ev.target !== btn) {
+    dropdown.style.display = 'none';
+  }
 });
 document.getElementById('sftp-editor-text').addEventListener('input', (ev) => {
   staticSftpState.editorContent = String(ev.target?.value || '');
@@ -6733,6 +7857,10 @@ document.addEventListener('click', (ev) => {
   if (sessionMenu && sessionMenu.style.display !== 'none' && !sessionMenu.contains(ev.target)) {
     hideSessionContextMenu();
   }
+  const termMenu = document.getElementById('terminal-context-menu');
+  if (termMenu && termMenu.style.display !== 'none' && !termMenu.contains(ev.target)) {
+    hideTerminalContextMenu();
+  }
 });
 window.addEventListener('resize', () => {
   hideTabAddMenu();
@@ -6753,6 +7881,27 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
+// ── Sidebar search ──
+(function () {
+  const input = document.getElementById('sb-search-input');
+  const clear = document.getElementById('sb-search-clear');
+  if (!input || !clear) return;
+
+  input.addEventListener('input', () => {
+    sidebarSearchQuery = input.value.trim();
+    clear.hidden = !sidebarSearchQuery;
+    renderSidebar();
+  });
+
+  clear.addEventListener('click', () => {
+    input.value = '';
+    sidebarSearchQuery = '';
+    clear.hidden = true;
+    input.focus();
+    renderSidebar();
+  });
+})();
+
 initStaticSftpColumnResizers();
 updateSftpViewButtons();
 updateSftpPaneButtons();
@@ -6766,10 +7915,11 @@ refreshAddBtn();
 // ══════════════════════════════════════════════════════════
 
 const SHORTCUTS_DATA = [
-  { key: 'Ctrl + T', desc: 'New Terminal Tab' },
+  { key: 'Ctrl + T', desc: 'New Terminal Tab (selected server)' },
   { key: 'Ctrl + W', desc: 'Close Current Tab' },
   { key: 'Ctrl + Tab', desc: 'Next Tab' },
   { key: 'Ctrl + Shift + Tab', desc: 'Previous Tab' },
+  { key: 'Ctrl + Shift + F', desc: 'Focus Sidebar Search' },
   { key: 'Ctrl + Shift + C', desc: 'Copy (Terminal)' },
   { key: 'Ctrl + Shift + V', desc: 'Paste (Terminal)' },
   { key: 'Ctrl + /', desc: 'Toggle Shortcuts Panel' },
@@ -6832,6 +7982,54 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
+// ── Global tab / server keyboard shortcuts ──
+document.addEventListener('keydown', (ev) => {
+  const mod = ev.ctrlKey || ev.metaKey;
+  if (!mod) return;
+
+  // Skip when user is typing in an input (but not in xterm — xterm handles its own events).
+  const inInput = (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA' || ev.target.isContentEditable)
+    && !ev.target.classList.contains('xterm-helper-textarea');
+
+  // Ctrl+Shift+F — focus sidebar search
+  if (mod && ev.shiftKey && ev.key === 'F') {
+    ev.preventDefault();
+    const input = document.getElementById('sb-search-input');
+    if (input) { input.focus(); input.select(); }
+    return;
+  }
+
+  if (inInput) return;
+
+  // Ctrl+T — new terminal for the selected server
+  if (!ev.shiftKey && ev.key === 't') {
+    ev.preventDefault();
+    openSelectedServerTerminal();
+    return;
+  }
+
+  // Ctrl+W — close the active terminal tab
+  if (!ev.shiftKey && ev.key === 'w') {
+    ev.preventDefault();
+    if (activeTabId && termTabs[activeTabId]) {
+      void closeTab(null, activeTabId);
+    }
+    return;
+  }
+
+  // Ctrl+Tab / Ctrl+Shift+Tab — cycle through terminal tabs
+  if (ev.key === 'Tab') {
+    ev.preventDefault();
+    const ids = Object.keys(termTabs);
+    if (ids.length === 0) return;
+    const cur = ids.indexOf(activeTabId);
+    const next = ev.shiftKey
+      ? (cur - 1 + ids.length) % ids.length
+      : (cur + 1) % ids.length;
+    setActiveTab(ids[next]);
+  }
+});
+
 // Add keyboard shortcut to toggle search
 document.addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f') {
@@ -6855,21 +8053,49 @@ createShortcutsPanel();
 createShortcutsToggle();
 
 // Initial load
+loadAppPrefs();
+loadSftpBookmarks();
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission().catch(() => {});
+}
 loadServers();
 setInterval(() => { void refreshServerStatuses(); }, STATUS_REFRESH_INTERVAL_MS);
 setInterval(() => { void tickLiveMetricsRefresh(); }, METRICS_LIVE_REFRESH_INTERVAL_MS);
 
-// Intercept Ctrl+Shift+C globally in the capture phase to block inspect element tool from opening
+// Ctrl+P → command palette
 document.addEventListener('keydown', (ev) => {
-  if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const sel = window.getSelection().toString();
-    if (sel) {
-      navigator.clipboard.writeText(sel);
+  if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.code === 'KeyP') {
+    const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName);
+    if (!inInput) {
+      ev.preventDefault();
+      openCommandPalette();
     }
   }
 }, true);
+
+// Intercept Ctrl+Shift+C globally in the capture phase to block inspect element tool from opening
+document.addEventListener('keydown', (ev) => {
+  if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
+    ev.preventDefault(); // prevent DevTools from opening
+    // No stopPropagation — xterm needs the event to reach its own handler
+    const sel = window.getSelection().toString();
+    if (sel) {
+      navigator.clipboard.writeText(sel).catch(() => {});
+    }
+  }
+}, true);
+
+// ── Session snapshot: save open SSH tabs on close, restore on next launch ──
+window.addEventListener('beforeunload', () => {
+  const snapshot = Object.values(termTabs)
+    .filter((t) => t.mode === 'ssh' && t.srvId && SRV.some((s) => s.id === t.srvId))
+    .map((t) => ({ serverId: t.srvId, pinned: t.pinned || false }));
+  if (snapshot.length > 0) {
+    localStorage.setItem('terminox_session_snapshot', JSON.stringify(snapshot));
+  } else {
+    localStorage.removeItem('terminox_session_snapshot');
+  }
+});
 
 window.addEventListener('focus', async () => {
   if (activeTabId && termTabs[activeTabId] && termTabs[activeTabId].mode === 'vnc' && termTabs[activeTabId].rfb) {
