@@ -21,17 +21,21 @@ impl SshSessionManager {
         }
     }
 
-    /// Connect to a server and return the session ID
+    /// Connect to a server and return the session ID.
+    /// If `jump_config` is provided, the connection is tunneled through that host first.
     pub async fn connect(
         &self,
         config: &ServerConfig,
+        jump_config: Option<&ServerConfig>,
         app: AppHandle,
         cols: u32,
         rows: u32,
     ) -> Result<String> {
         let session_id = Uuid::new_v4().to_string();
 
-        let session = Arc::new(SshSession::connect(config, &session_id, app, cols, rows).await?);
+        let session = Arc::new(
+            SshSession::connect(config, jump_config, &session_id, app, cols, rows).await?,
+        );
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(session_id.clone(), session);

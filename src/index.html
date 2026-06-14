@@ -68,6 +68,12 @@
           <div class="sb-session-row">
             <button class="sb-session-btn" id="sb-add-session-btn" title="Add Session">Add Session</button>
           </div>
+          <div class="sb-search-wrap" id="sb-search-wrap">
+            <input id="sb-search-input" class="sb-search-input" type="text"
+              placeholder="Search servers…" autocomplete="off" spellcheck="false"
+              aria-label="Search servers">
+            <button id="sb-search-clear" class="sb-search-clear" aria-label="Clear search" hidden>&#x00d7;</button>
+          </div>
           <div class="sb-list" id="sb-list"></div>
           <button class="sb-settings-tab" id="sb-gear-btn" title="Server Settings" aria-label="Server Settings">
             <span class="sb-settings-icon">&#x2699;</span>
@@ -235,7 +241,10 @@
                   <button class="sftp-btn" id="sftp-up-btn" title="Parent">Up</button>
                   <input class="sftp-path" id="sftp-path-input" value="." spellcheck="false" aria-label="SFTP path">
                   <button class="sftp-btn" id="sftp-go-btn" aria-label="Navigate to path">Go</button>
+                  <button class="sftp-bookmark-btn" id="sftp-bookmark-btn" title="Bookmark this path">&#x2605;</button>
+                  <button class="sftp-bookmark-btn" id="sftp-bookmarks-list-btn" title="Saved bookmarks">&#x25be;</button>
                 </div>
+                <div id="sftp-bookmarks-dropdown" class="sftp-context-menu" style="display:none"></div>
                 <div class="sftp-status" id="sftp-status-static">Select a node to start</div>
                 <div class="sftp-table-wrap" id="sftp-table-wrap-static">
                   <div class="sftp-header-row sftp-grid-row" id="sftp-header-static">
@@ -271,6 +280,7 @@
       </div>
     </div>
   </div>
+  <div class="sftp-context-menu" id="terminal-context-menu" style="display:none"></div>
   <div class="sftp-context-menu" id="sftp-context-menu" style="display:none"></div>
   <div class="sftp-context-menu" id="server-context-menu" style="display:none"></div>
   <div class="sftp-context-menu" id="folder-context-menu" style="display:none"></div>

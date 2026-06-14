@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  test: {
+    environment: 'node',
+    globals: true,
+    include: ['src/__tests__/**/*.test.js'],
+  },
   root: 'src',
   publicDir: 'public',
   build: {

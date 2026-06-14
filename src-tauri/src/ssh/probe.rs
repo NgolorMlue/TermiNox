@@ -578,3 +578,104 @@ pub async fn collect_metrics(config: &ServerConfig) -> Result<ServerMetricsSnaps
         fetched_unix_ms: now_unix_ms(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_probe_output(pairs: &[(&str, &str)]) -> String {
+        pairs.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
+    }
+
+    #[test]
+    fn parse_probe_output_basic() {
+        let raw = make_probe_output(&[
+            ("hostname", "web01"),
+            ("os_name", "Ubuntu"),
+            ("cpu_used_percent", "42"),
+            ("memory_used_percent", "68"),
+            ("disk_used_percent", "55"),
+        ]);
+        let map = parse_probe_output(&raw);
+        assert_eq!(map.get("hostname").map(|s| s.as_str()), Some("web01"));
+        assert_eq!(map.get("os_name").map(|s| s.as_str()), Some("Ubuntu"));
+        assert_eq!(map.get("cpu_used_percent").map(|s| s.as_str()), Some("42"));
+    }
+
+    #[test]
+    fn parse_probe_output_ignores_lines_without_equals() {
+        let raw = "not_a_kv_line\nhostname=myhost\n";
+        let map = parse_probe_output(raw);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("hostname").map(|s| s.as_str()), Some("myhost"));
+    }
+
+    #[test]
+    fn parse_probe_output_trims_whitespace() {
+        let raw = " hostname = web02 \nos_name= Debian \n";
+        let map = parse_probe_output(raw);
+        assert_eq!(map.get("hostname").map(|s| s.as_str()), Some("web02"));
+        assert_eq!(map.get("os_name").map(|s| s.as_str()), Some("Debian"));
+    }
+
+    #[test]
+    fn parse_probe_output_empty_value() {
+        let raw = "cpu_used_percent=\n";
+        let map = parse_probe_output(raw);
+        assert_eq!(map.get("cpu_used_percent").map(|s| s.as_str()), Some(""));
+    }
+
+    #[test]
+    fn looks_valid_probe_requires_hostname_and_os() {
+        let valid = parse_probe_output(&make_probe_output(&[
+            ("hostname", "h1"),
+            ("os_name", "Linux"),
+        ]));
+        assert!(looks_valid_probe(&valid));
+
+        let no_hostname = parse_probe_output(&make_probe_output(&[("os_name", "Linux")]));
+        assert!(!looks_valid_probe(&no_hostname));
+
+        let no_os = parse_probe_output(&make_probe_output(&[("hostname", "h1")]));
+        assert!(!looks_valid_probe(&no_os));
+    }
+
+    #[test]
+    fn looks_valid_probe_accepts_os_pretty_instead_of_os_name() {
+        let map = parse_probe_output(&make_probe_output(&[
+            ("hostname", "h2"),
+            ("os_pretty", "Ubuntu 22.04 LTS"),
+        ]));
+        assert!(looks_valid_probe(&map));
+    }
+
+    #[test]
+    fn probe_looks_windows_detects_windows() {
+        let win = parse_probe_output(&make_probe_output(&[
+            ("hostname", "WIN-PC"),
+            ("os_name", "Microsoft Windows 11 Pro"),
+        ]));
+        assert!(probe_looks_windows(&win));
+
+        let linux = parse_probe_output(&make_probe_output(&[
+            ("hostname", "srv"),
+            ("os_name", "Ubuntu"),
+        ]));
+        assert!(!probe_looks_windows(&linux));
+    }
+
+    #[test]
+    fn parse_numeric_helpers() {
+        let map = parse_probe_output(&make_probe_output(&[
+            ("cpu_cores", "8"),
+            ("uptime_seconds", "123456"),
+            ("cpu_used_percent", "73.5"),
+            ("empty_field", ""),
+        ]));
+        assert_eq!(parse_u32(&map, "cpu_cores"), Some(8));
+        assert_eq!(parse_u64(&map, "uptime_seconds"), Some(123456));
+        assert!((parse_f64(&map, "cpu_used_percent").unwrap() - 73.5).abs() < f64::EPSILON);
+        assert_eq!(parse_u32(&map, "empty_field"), None);
+        assert_eq!(parse_u32(&map, "missing_key"), None);
+    }
+}
