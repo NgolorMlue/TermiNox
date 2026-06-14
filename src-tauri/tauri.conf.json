@@ -1,6 +1,6 @@
 {
   "productName": "NodeGrid",
-  "version": "1.12.4",
+  "version": "1.12.5",
   "identifier": "com.terminey.nodegrid",
   "build": {
     "devUrl": "http://localhost:1420",
